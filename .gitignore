@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.tauri/
+.npm-cache/
+src-tauri/target/
+src-tauri/gen/
+*.local
+*.log
+.env
+.env.*
+!.env.example
+.reasonix/
+graphify-out/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
