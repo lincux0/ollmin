@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +12,7 @@ pub struct ConversationSummary {
     pub id: String,
     pub title: String,
     pub model: String,
+    pub model_alias: String,
     pub mode: String,
     pub created_at: String,
     pub updated_at: String,
@@ -57,6 +58,8 @@ pub struct AppSettings {
     pub theme: String,
     pub save_thinking: bool,
     pub default_mode: String,
+    pub default_model: String,
+    pub model_alias: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,13 +98,14 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
         })
         .map_err(|error| format!("读取数据库版本失败：{error}"))?;
 
-    if applied.unwrap_or(0) < SCHEMA_VERSION {
+    if applied.unwrap_or(0) < 1 {
         connection
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS conversations (
                    id TEXT PRIMARY KEY NOT NULL,
                    title TEXT NOT NULL,
                    model TEXT NOT NULL,
+                   model_alias TEXT NOT NULL DEFAULT '',
                    mode TEXT NOT NULL,
                    created_at TEXT NOT NULL,
                    updated_at TEXT NOT NULL
@@ -133,7 +137,38 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
         connection
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-                params![SCHEMA_VERSION, timestamp()],
+                params![1, timestamp()],
+            )
+            .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
+    }
+
+    if applied.unwrap_or(0) < SCHEMA_VERSION {
+        let has_model_alias: bool = connection
+            .prepare("PRAGMA table_info(conversations)")
+            .map_err(|error| format!("读取会话表结构失败：{error}"))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| format!("读取会话字段失败：{error}"))?
+            .filter_map(Result::ok)
+            .any(|name| name == "model_alias");
+        if !has_model_alias {
+            connection
+                .execute(
+                    "ALTER TABLE conversations ADD COLUMN model_alias TEXT NOT NULL DEFAULT ''",
+                    [],
+                )
+                .map_err(|error| format!("升级会话模型别名字段失败：{error}"))?;
+        }
+        connection
+            .execute_batch(
+                "INSERT OR IGNORE INTO settings(key, value) VALUES
+                   ('default_model', ''),
+                   ('model_alias', '');",
+            )
+            .map_err(|error| format!("补充模型设置失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![2, timestamp()],
             )
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
@@ -148,11 +183,12 @@ pub fn list_conversations(
     let search = format!("%{}%", query.unwrap_or("").trim());
     let mut statement = connection
         .prepare(
-            "SELECT c.id, c.title, c.model, c.mode, c.created_at, c.updated_at,
+            "SELECT c.id, c.title, c.model, c.model_alias, c.mode, c.created_at, c.updated_at,
                     (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count
              FROM conversations c
              WHERE LOWER(c.title) LIKE LOWER(?1)
                 OR LOWER(c.model) LIKE LOWER(?1)
+                OR LOWER(c.model_alias) LIKE LOWER(?1)
                 OR EXISTS (
                   SELECT 1 FROM messages sm
                   WHERE sm.conversation_id = c.id AND LOWER(sm.content) LIKE LOWER(?1)
@@ -162,14 +198,21 @@ pub fn list_conversations(
         .map_err(|error| format!("准备会话列表查询失败：{error}"))?;
     let rows = statement
         .query_map(params![search], |row| {
+            let model: String = row.get(2)?;
+            let model_alias: String = row.get(3)?;
             Ok(ConversationSummary {
                 id: row.get(0)?,
                 title: row.get(1)?,
-                model: row.get(2)?,
-                mode: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                message_count: row.get::<_, i64>(6)? as u32,
+                model: model.clone(),
+                model_alias: if model_alias.trim().is_empty() {
+                    model
+                } else {
+                    model_alias
+                },
+                mode: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                message_count: row.get::<_, i64>(7)? as u32,
             })
         })
         .map_err(|error| format!("读取会话列表失败：{error}"))?;
@@ -178,26 +221,40 @@ pub fn list_conversations(
         .collect()
 }
 
-pub fn create_conversation(
+fn insert_conversation(
     connection: &Connection,
     id: &str,
     model: &str,
+    model_alias: Option<&str>,
     mode: &str,
     title: Option<&str>,
-) -> Result<ConversationDetail, String> {
+) -> Result<String, String> {
     let id = required(id, "会话 ID")?;
     let model = required(model, "模型名称")?;
+    let model_alias = normalize_model_alias(model_alias.unwrap_or(""), &model);
     let mode = required(mode, "性能模式")?;
     validate_mode(&mode)?;
     let now = timestamp();
     let title = normalize_title(title.unwrap_or("新对话"));
     connection
         .execute(
-            "INSERT OR IGNORE INTO conversations(id, title, model, mode, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-            params![id, title, model, mode, now],
+            "INSERT OR IGNORE INTO conversations(id, title, model, model_alias, mode, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![id, title, model, model_alias, mode, now],
         )
         .map_err(|error| format!("创建会话失败：{error}"))?;
+    Ok(id)
+}
+
+pub fn create_conversation_with_alias(
+    connection: &Connection,
+    id: &str,
+    model: &str,
+    model_alias: Option<&str>,
+    mode: &str,
+    title: Option<&str>,
+) -> Result<ConversationDetail, String> {
+    let id = insert_conversation(connection, id, model, model_alias, mode, title)?;
     get_conversation(connection, &id)
 }
 
@@ -205,7 +262,7 @@ pub fn get_conversation(connection: &Connection, id: &str) -> Result<Conversatio
     let id = required(id, "会话 ID")?;
     let conversation = connection
         .query_row(
-            "SELECT c.id, c.title, c.model, c.mode, c.created_at, c.updated_at,
+            "SELECT c.id, c.title, c.model, c.model_alias, c.mode, c.created_at, c.updated_at,
                     (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id)
              FROM conversations c WHERE c.id = ?1",
             params![id],
@@ -214,10 +271,18 @@ pub fn get_conversation(connection: &Connection, id: &str) -> Result<Conversatio
                     id: row.get(0)?,
                     title: row.get(1)?,
                     model: row.get(2)?,
-                    mode: row.get(3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    message_count: row.get::<_, i64>(6)? as u32,
+                    model_alias: {
+                        let alias: String = row.get(3)?;
+                        if alias.trim().is_empty() {
+                            row.get(2)?
+                        } else {
+                            alias
+                        }
+                    },
+                    mode: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                    message_count: row.get::<_, i64>(7)? as u32,
                 })
             },
         )
@@ -282,7 +347,7 @@ pub fn delete_conversation(connection: &Connection, id: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub fn save_message(connection: &Connection, input: MessageInput) -> Result<(), String> {
+fn save_message_inner(connection: &Connection, input: MessageInput) -> Result<(), String> {
     validate_role(&input.role)?;
     let status = required(&input.status, "消息状态")?;
     let content = input.content;
@@ -333,11 +398,48 @@ pub fn save_message(connection: &Connection, input: MessageInput) -> Result<(), 
     Ok(())
 }
 
+pub fn save_message(connection: &Connection, input: MessageInput) -> Result<(), String> {
+    save_message_inner(connection, input)
+}
+
+pub fn create_conversation_with_message_alias(
+    connection: &mut Connection,
+    id: &str,
+    model: &str,
+    model_alias: Option<&str>,
+    mode: &str,
+    title: Option<&str>,
+    message: MessageInput,
+) -> Result<ConversationDetail, String> {
+    let conversation_id = required(id, "会话 ID")?;
+    if message.conversation_id.trim() != conversation_id {
+        return Err("消息所属会话与会话 ID 不一致".to_string());
+    }
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开启会话事务失败：{error}"))?;
+    insert_conversation(
+        &transaction,
+        &conversation_id,
+        model,
+        model_alias,
+        mode,
+        title,
+    )?;
+    save_message_inner(&transaction, message)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("提交会话事务失败：{error}"))?;
+    get_conversation(connection, &conversation_id)
+}
+
 pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
     let mut settings = AppSettings {
         theme: "system".to_string(),
         save_thinking: false,
         default_mode: "fast".to_string(),
+        default_model: String::new(),
+        model_alias: String::new(),
     };
     let mut statement = connection
         .prepare("SELECT key, value FROM settings")
@@ -353,6 +455,8 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
             "theme" => settings.theme = value,
             "save_thinking" => settings.save_thinking = value == "true",
             "default_mode" => settings.default_mode = value,
+            "default_model" => settings.default_model = value,
+            "model_alias" => settings.model_alias = value,
             _ => {}
         }
     }
@@ -361,7 +465,7 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
 
 pub fn update_settings(
     connection: &Connection,
-    settings: AppSettings,
+    mut settings: AppSettings,
 ) -> Result<AppSettings, String> {
     if !matches!(settings.theme.as_str(), "system" | "light" | "dark") {
         return Err("不支持的主题设置".to_string());
@@ -372,10 +476,17 @@ pub fn update_settings(
     ) {
         return Err("不支持的默认性能模式".to_string());
     }
+    settings.default_model = settings.default_model.trim().to_string();
+    settings.model_alias = settings.model_alias.trim().chars().take(80).collect();
+    if settings.default_model.is_empty() {
+        settings.model_alias.clear();
+    }
     for (key, value) in [
         ("theme", settings.theme.clone()),
         ("save_thinking", settings.save_thinking.to_string()),
         ("default_mode", settings.default_mode.clone()),
+        ("default_model", settings.default_model.clone()),
+        ("model_alias", settings.model_alias.clone()),
     ] {
         connection
             .execute(
@@ -490,6 +601,15 @@ fn normalize_title(value: &str) -> String {
     title
 }
 
+fn normalize_model_alias(value: &str, model: &str) -> String {
+    let alias: String = value.trim().chars().take(80).collect();
+    if alias.is_empty() {
+        model.to_string()
+    } else {
+        alias
+    }
+}
+
 fn sanitize_filename(value: &str) -> String {
     let sanitized: String = value
         .chars()
@@ -522,9 +642,9 @@ fn timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_conversations, create_conversation, get_conversation, get_settings,
-        list_conversations, migrate, rename_conversation, save_message, update_settings,
-        AppSettings, MessageInput,
+        clear_conversations, create_conversation_with_alias,
+        create_conversation_with_message_alias, get_conversation, get_settings, list_conversations,
+        migrate, rename_conversation, save_message, update_settings, AppSettings, MessageInput,
     };
     use rusqlite::Connection;
     use serde_json::json;
@@ -556,13 +676,56 @@ mod tests {
         assert_eq!(settings.theme, "system");
         assert!(!settings.save_thinking);
         assert_eq!(settings.default_mode, "fast");
+        assert!(settings.default_model.is_empty());
+        assert!(settings.model_alias.is_empty());
+    }
+
+    #[test]
+    fn migration_upgrades_an_existing_v1_conversation_table() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations(version, applied_at) VALUES (1, '0');
+                 CREATE TABLE conversations (
+                   id TEXT PRIMARY KEY NOT NULL,
+                   title TEXT NOT NULL,
+                   model TEXT NOT NULL,
+                   mode TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
+            )
+            .expect("create v1 schema");
+
+        migrate(&connection).expect("upgrade v1 schema");
+        let has_alias: bool = connection
+            .prepare("PRAGMA table_info(conversations)")
+            .expect("inspect schema")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("read schema")
+            .filter_map(Result::ok)
+            .any(|name| name == "model_alias");
+        assert!(has_alias);
+        assert!(get_settings(&connection)
+            .expect("settings after upgrade")
+            .default_model
+            .is_empty());
     }
 
     #[test]
     fn messages_cascade_when_conversation_is_deleted() {
         let connection = database();
-        create_conversation(&connection, "conversation-a", "qwen3:4b", "fast", None)
-            .expect("create");
+        create_conversation_with_alias(
+            &connection,
+            "conversation-a",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create");
         save_message(
             &connection,
             message("message-a", "conversation-a", Some("private")),
@@ -579,8 +742,15 @@ mod tests {
     #[test]
     fn thinking_is_not_persisted_until_setting_is_enabled() {
         let connection = database();
-        create_conversation(&connection, "conversation-b", "qwen3:4b", "fast", None)
-            .expect("create");
+        create_conversation_with_alias(
+            &connection,
+            "conversation-b",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create");
         save_message(
             &connection,
             message("message-b", "conversation-b", Some("private")),
@@ -597,6 +767,8 @@ mod tests {
                 theme: "system".to_string(),
                 save_thinking: true,
                 default_mode: "fast".to_string(),
+                default_model: "qwen3:4b".to_string(),
+                model_alias: "本地助手".to_string(),
             },
         )
         .expect("settings");
@@ -618,12 +790,99 @@ mod tests {
     #[test]
     fn search_and_rename_update_conversation_metadata() {
         let connection = database();
-        create_conversation(&connection, "conversation-c", "qwen3:4b", "fast", None)
-            .expect("create");
+        create_conversation_with_alias(
+            &connection,
+            "conversation-c",
+            "qwen3:4b",
+            Some("本地助手"),
+            "fast",
+            None,
+        )
+        .expect("create");
         save_message(&connection, message("message-d", "conversation-c", None)).expect("save");
         rename_conversation(&connection, "conversation-c", "本地问答").expect("rename");
         let results = list_conversations(&connection, Some("本地")).expect("search");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "本地问答");
+        assert_eq!(
+            list_conversations(&connection, Some("助手"))
+                .expect("alias search")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn conversation_and_first_message_are_created_atomically() {
+        let mut connection = database();
+        let detail = create_conversation_with_message_alias(
+            &mut connection,
+            "conversation-transaction",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+            MessageInput {
+                id: "message-transaction".to_string(),
+                conversation_id: "conversation-transaction".to_string(),
+                role: "user".to_string(),
+                content: "hello".to_string(),
+                thinking: None,
+                status: "done".to_string(),
+                created_at: None,
+                metrics: None,
+            },
+        )
+        .expect("transaction");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.messages[0].content, "hello");
+        assert_eq!(detail.conversation.message_count, 1);
+    }
+
+    #[test]
+    fn conversation_transaction_rolls_back_when_message_is_invalid() {
+        let mut connection = database();
+        let mut invalid = message("message-invalid", "conversation-rollback", None);
+        invalid.role = "tool".to_string();
+        assert!(create_conversation_with_message_alias(
+            &mut connection,
+            "conversation-rollback",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+            invalid,
+        )
+        .is_err());
+        assert!(get_conversation(&connection, "conversation-rollback").is_err());
+    }
+
+    #[test]
+    fn model_alias_is_persisted_on_the_conversation_snapshot() {
+        let connection = database();
+        let detail = create_conversation_with_alias(
+            &connection,
+            "conversation-alias",
+            "qwen3:4b",
+            Some("本地助手"),
+            "fast",
+            None,
+        )
+        .expect("create aliased conversation");
+        assert_eq!(detail.conversation.model, "qwen3:4b");
+        assert_eq!(detail.conversation.model_alias, "本地助手");
+
+        let mut connection = connection;
+        let detail = create_conversation_with_message_alias(
+            &mut connection,
+            "conversation-alias-2",
+            "qwen3:4b",
+            Some("问答助手"),
+            "fast",
+            None,
+            message("message-alias", "conversation-alias-2", None),
+        )
+        .expect("create aliased conversation with message");
+        assert_eq!(detail.conversation.model_alias, "问答助手");
     }
 }

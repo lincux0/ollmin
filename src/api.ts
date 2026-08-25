@@ -60,8 +60,27 @@ export function createConversation(
   model: string,
   mode: PerformanceMode,
   title?: string,
+  modelAlias?: string,
 ): Promise<ConversationDetail> {
-  return invoke<ConversationDetail>("create_conversation", { id, model, mode, title });
+  return invoke<ConversationDetail>("create_conversation", { id, model, mode, title, modelAlias });
+}
+
+export function createConversationWithMessage(
+  id: string,
+  model: string,
+  mode: PerformanceMode,
+  message: PersistedMessageInput,
+  title?: string,
+  modelAlias?: string,
+): Promise<ConversationDetail> {
+  return invoke<ConversationDetail>("create_conversation_with_message", {
+    id,
+    model,
+    mode,
+    title,
+    modelAlias,
+    message,
+  });
 }
 
 export function getConversation(conversationId: string): Promise<ConversationDetail> {

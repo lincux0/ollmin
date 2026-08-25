@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ProfilerOnRenderCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import "./index.css";
 import {
   clearConversations,
-  createConversation,
+  createConversationWithMessage,
   deleteConversation,
   exportConversation,
   getConversation,
@@ -18,15 +19,18 @@ import {
   updateSettings,
   warmModel,
 } from "./api";
-import MarkdownContent from "./components/MarkdownContent";
+import MessageItem from "./components/MessageItem";
+import { diagnosticsEnabled, installLongTaskObserver, recordDiagnostic, scheduleDiagnosticPaint } from "./lib/diagnostics";
 import { trimHistoryForFastMode } from "./lib/history";
 import { deriveChatMetrics, formatMetric } from "./lib/metrics";
 import { PERFORMANCE_PROFILES, profileForMode, type PerformanceMode } from "./lib/performance";
+import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
 import type {
   AppSettings,
   ChatMessage,
   ChatMetrics,
   ChatResponse,
+  ChatDiagnosticPayload,
   ChatStreamPayload,
   ConversationDetail,
   ConversationSummary,
@@ -46,6 +50,7 @@ interface ConversationMessage extends ChatMessage {
   error?: string;
   createdAt?: string;
   metrics?: ChatMetrics | null;
+  modelAlias?: string;
 }
 
 interface AssistantBuffer {
@@ -57,14 +62,31 @@ interface AssistantBuffer {
   metrics: ChatMetrics | null;
 }
 
+interface AssistantSnapshot {
+  requestId: string;
+  id: string;
+  content: string;
+  thinking: string;
+  metrics: ChatMetrics | null;
+  status: MessageStatus;
+  error?: string;
+  terminal: boolean;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   saveThinking: false,
   defaultMode: "fast",
+  defaultModel: "",
+  modelAlias: "",
 };
 
 function modelName(model: OllamaModel): string {
   return model.name ?? model.model ?? "未知模型";
+}
+
+function modelAlias(alias: string | undefined, model: string): string {
+  return alias?.trim() || model;
 }
 
 function errorText(error: unknown): string {
@@ -92,7 +114,7 @@ function safeMode(value: string): PerformanceMode {
   return value === "fast" || value === "balanced" || value === "reasoning" ? value : "fast";
 }
 
-function fromStoredMessage(message: StoredMessage): ConversationMessage {
+function fromStoredMessage(message: StoredMessage, alias?: string): ConversationMessage {
   return {
     id: message.id,
     role: message.role,
@@ -101,6 +123,7 @@ function fromStoredMessage(message: StoredMessage): ConversationMessage {
     status: messageStatus(message.status),
     createdAt: message.createdAt,
     metrics: message.metrics ?? null,
+    modelAlias: alias,
   };
 }
 
@@ -130,6 +153,7 @@ export default function App() {
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [models, setModels] = useState<OllamaModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [currentModelAlias, setCurrentModelAlias] = useState("");
   const [mode, setMode] = useState<PerformanceMode>(DEFAULT_SETTINGS.defaultMode);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -150,9 +174,131 @@ export default function App() {
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
   const assistantBuffer = useRef<AssistantBuffer | null>(null);
+  const streamCoalescer = useRef<StreamCoalescer<AssistantSnapshot> | null>(null);
+  const streamEventCount = useRef(0);
+  const lastStreamSequence = useRef<number | null>(null);
+  const paintState = useRef(new Map<string, { first: boolean; twenty: boolean; terminal: boolean }>());
   const conversationIdRef = useRef<string | null>(null);
+  const requestUserStartedAt = useRef(0);
   const requestStartedAt = useRef(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+  const followMessagesRef = useRef(true);
+  const tauriWindowRef = useRef<TauriWindow | null>(null);
+  const searchRef = useRef(search);
+  searchRef.current = search;
+
+  const applyAssistantSnapshot = useCallback((snapshot: AssistantSnapshot) => {
+    if (snapshot.requestId !== activeRequestId.current) return;
+    setMessages((current) => current.map((message) => message.id === snapshot.id
+      ? {
+          ...message,
+          content: snapshot.content,
+          thinking: snapshot.thinking || undefined,
+          metrics: snapshot.metrics,
+          status: snapshot.status,
+          error: snapshot.error,
+        }
+      : message));
+
+    recordDiagnostic(snapshot.requestId, "flush", {
+      contentLength: snapshot.content.length,
+      thinkingLength: snapshot.thinking.length,
+      terminal: snapshot.terminal,
+    });
+    const state = paintState.current.get(snapshot.requestId) ?? { first: false, twenty: false, terminal: false };
+    if ((snapshot.content || snapshot.thinking) && !state.first) {
+      state.first = true;
+      scheduleDiagnosticPaint(snapshot.requestId, "T5", {
+        contentLength: snapshot.content.length,
+        thinkingLength: snapshot.thinking.length,
+      });
+    }
+    if (snapshot.content.length >= 20 && !state.twenty) {
+      state.twenty = true;
+      scheduleDiagnosticPaint(snapshot.requestId, "T6", { contentLength: snapshot.content.length });
+    }
+    if (snapshot.terminal && !state.terminal) {
+      state.terminal = true;
+      scheduleDiagnosticPaint(snapshot.requestId, "T7", {
+        contentLength: snapshot.content.length,
+        thinkingLength: snapshot.thinking.length,
+      });
+    }
+    paintState.current.set(snapshot.requestId, state);
+  }, []);
+
+  const handleMessageRender = useCallback<ProfilerOnRenderCallback>(
+    (id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+      if (!diagnosticsEnabled()) return;
+      recordDiagnostic(activeRequestId.current ?? "global", "react-commit", {
+        component: id,
+        renderPhase: phase,
+        actualDurationMs: Number(actualDuration.toFixed(2)),
+        baseDurationMs: Number(baseDuration.toFixed(2)),
+        renderStartMs: Number(startTime.toFixed(2)),
+        commitMs: Number(commitTime.toFixed(2)),
+      });
+    },
+    [],
+  );
+
+  const handleMessageListScroll = useCallback(() => {
+    const element = messageListRef.current;
+    if (!element) return;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    followMessagesRef.current = distanceFromBottom < 72;
+  }, []);
+
+  const handleWindowDrag = useCallback((event: MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    void tauriWindowRef.current?.startDragging().catch(() => undefined);
+  }, []);
+
+  const toggleWindowMaximize = useCallback(() => {
+    void tauriWindowRef.current?.toggleMaximize().catch(() => undefined);
+  }, []);
+
+  const minimizeWindow = useCallback(() => {
+    void tauriWindowRef.current?.minimize().catch(() => undefined);
+  }, []);
+
+  const closeWindow = useCallback(() => {
+    void tauriWindowRef.current?.close().catch(() => undefined);
+  }, []);
+
+  useEffect(() => installLongTaskObserver(), []);
+  useEffect(() => {
+    try {
+      tauriWindowRef.current = getCurrentWindow();
+    } catch {
+      // Browser preview/tests do not expose Tauri window internals.
+      tauriWindowRef.current = null;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = messageListRef.current;
+    if (!element || !followMessagesRef.current) return;
+    element.scrollTop = element.scrollHeight;
+  }, [messages]);
+
+  useEffect(() => {
+    if (conversationIdRef.current || busy || models.length === 0) return;
+    const configured = settings.defaultModel.trim();
+    const preferred = configured && models.some((model) => modelName(model) === configured)
+      ? configured
+      : selectedModel && models.some((model) => modelName(model) === selectedModel)
+        ? selectedModel
+        : modelName(models[0]);
+    if (preferred !== selectedModel) setSelectedModel(preferred);
+    setCurrentModelAlias(modelAlias(preferred === configured ? settings.modelAlias : "", preferred));
+  }, [busy, models, settings.defaultModel, settings.modelAlias]);
+
+  useEffect(() => () => {
+    streamCoalescer.current?.dispose();
+    streamCoalescer.current = null;
+  }, []);
 
   const refreshConnection = useCallback(async () => {
     try {
@@ -163,11 +309,10 @@ export default function App() {
       const nextModels = modelResponse.models ?? [];
       setStatus(service);
       setModels(nextModels);
-      setSelectedModel((current) =>
-        current && nextModels.some((model) => modelName(model) === current)
-          ? current
-          : nextModels.length > 0 ? modelName(nextModels[0]) : "",
-      );
+      if (nextModels.length === 0 && !conversationIdRef.current) {
+        setSelectedModel("");
+        setCurrentModelAlias("");
+      }
     } catch (refreshError) {
       setStatus(null);
       setError(errorText(refreshError));
@@ -205,12 +350,46 @@ export default function App() {
 
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenChat: (() => void) | undefined;
+    let unlistenDiagnostic: (() => void) | undefined;
+
+    void listen<ChatDiagnosticPayload>("chat:diagnostic", ({ payload }) => {
+      const details: Record<string, string | number | boolean | null> = { elapsedMs: payload.elapsed_ms };
+      if (payload.first_byte_ms !== undefined) details.firstByteMs = payload.first_byte_ms;
+      if (payload.first_line_ms !== undefined) details.firstLineMs = payload.first_line_ms;
+      if (payload.first_emit_ms !== undefined) details.firstEmitMs = payload.first_emit_ms;
+      if (payload.final_emit_ms !== undefined) details.finalEmitMs = payload.final_emit_ms;
+      if (payload.bytes_received !== undefined) details.bytesReceived = payload.bytes_received;
+      if (payload.parsed_events !== undefined) details.parsedEvents = payload.parsed_events;
+      if (payload.emitted_events !== undefined) details.emittedEvents = payload.emitted_events;
+      recordDiagnostic(payload.request_id, `rust:${payload.phase}`, details);
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlistenDiagnostic = cleanup;
+    });
+
     void listen<ChatStreamPayload>("chat:chunk", ({ payload }) => {
       if (payload.request_id !== activeRequestId.current) return;
       const currentAssistantId = assistantBuffer.current?.id;
       const buffer = assistantBuffer.current;
       if (!currentAssistantId || !buffer) return;
+
+      streamEventCount.current += 1;
+      recordDiagnostic(payload.request_id, "T4", {
+        sequence: payload.sequence ?? null,
+        terminal: Boolean(payload.done || payload.error || payload.cancelled),
+        elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
+      });
+      if (payload.sequence !== undefined) {
+        const expected = (lastStreamSequence.current ?? 0) + 1;
+        if (payload.sequence !== expected) {
+          recordDiagnostic(payload.request_id, "sequence-gap", {
+            expected,
+            received: payload.sequence,
+          });
+        }
+        lastStreamSequence.current = payload.sequence;
+      }
 
       buffer.content += payload.content || "";
       buffer.thinking += payload.thinking || "";
@@ -222,16 +401,20 @@ export default function App() {
           : payload.done
             ? "done"
             : "streaming";
-      setMessages((current) => current.map((message) => message.id === currentAssistantId
-        ? {
-            ...message,
-            content: buffer.content,
-            thinking: buffer.thinking || undefined,
-            metrics: buffer.metrics,
-            status: nextStatus,
-            error: payload.error,
-          }
-        : message));
+      const terminal = Boolean(payload.done || payload.error || payload.cancelled);
+      streamCoalescer.current?.enqueue({
+        requestId: buffer.requestId,
+        id: currentAssistantId,
+        content: buffer.content,
+        thinking: buffer.thinking,
+        metrics: buffer.metrics,
+        status: nextStatus,
+        error: payload.error,
+        terminal,
+      }, {
+        terminal,
+        hasVisibleDelta: Boolean(payload.content || payload.thinking),
+      });
 
       if (payload.error) setError(payload.error);
       if (payload.response) {
@@ -240,6 +423,8 @@ export default function App() {
       }
       if (payload.done || payload.error || payload.cancelled) {
         const terminalBuffer = { ...buffer };
+        const terminalEventCount = streamEventCount.current;
+        const terminalUserStartedAt = requestUserStartedAt.current;
         if (terminalBuffer.content || nextStatus === "done" || nextStatus === "cancelled") {
           const persisted: PersistedMessageInput = {
             id: terminalBuffer.id,
@@ -251,9 +436,29 @@ export default function App() {
             metrics: terminalBuffer.metrics,
           };
           void saveMessage(persisted)
-            .then(() => loadConversations(search))
-            .catch((persistError) => setError(`保存回复失败：${errorText(persistError)}`));
+            .then(() => loadConversations(searchRef.current))
+            .then(() => recordDiagnostic(terminalBuffer.requestId, "T8", {
+              eventCount: terminalEventCount,
+              contentLength: terminalBuffer.content.length,
+              thinkingLength: terminalBuffer.thinking.length,
+              elapsedFromT0Ms: performance.now() - terminalUserStartedAt,
+            }))
+            .catch((persistError) => {
+              recordDiagnostic(terminalBuffer.requestId, "T8-error", {
+                eventCount: terminalEventCount,
+                elapsedFromT0Ms: performance.now() - terminalUserStartedAt,
+              });
+              setError(`保存回复失败：${errorText(persistError)}`);
+            });
+        } else {
+          recordDiagnostic(terminalBuffer.requestId, "T8", {
+            eventCount: terminalEventCount,
+            elapsedFromT0Ms: performance.now() - terminalUserStartedAt,
+          });
         }
+        streamCoalescer.current?.flush();
+        streamCoalescer.current?.dispose();
+        streamCoalescer.current = null;
         activeRequestId.current = null;
         requestConversationId.current = null;
         assistantBuffer.current = null;
@@ -261,13 +466,16 @@ export default function App() {
       }
     }).then((cleanup) => {
       if (disposed) cleanup();
-      else unlisten = cleanup;
+      else unlistenChat = cleanup;
     });
     return () => {
       disposed = true;
-      unlisten?.();
+      unlistenChat?.();
+      unlistenDiagnostic?.();
+      streamCoalescer.current?.dispose();
+      streamCoalescer.current = null;
     };
-  }, [loadConversations, search]);
+  }, [applyAssistantSnapshot, loadConversations]);
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
@@ -299,8 +507,10 @@ export default function App() {
       conversationIdRef.current = detail.conversation.id;
       setCurrentConversationId(detail.conversation.id);
       setSelectedModel(detail.conversation.model);
+      setCurrentModelAlias(modelAlias(detail.conversation.modelAlias, detail.conversation.model));
       setMode(safeMode(detail.conversation.mode));
-      const restored = detail.messages.map(fromStoredMessage);
+      followMessagesRef.current = true;
+      const restored = detail.messages.map((message) => fromStoredMessage(message, detail.conversation.modelAlias));
       setMessages(restored);
       const lastWithMetrics = [...detail.messages].reverse().find((message) => message.metrics);
       setLastMetrics(lastWithMetrics?.metrics ?? null);
@@ -318,6 +528,14 @@ export default function App() {
     if (busy) return;
     conversationIdRef.current = null;
     setCurrentConversationId(null);
+    const configuredModel = settings.defaultModel.trim();
+    const nextModel = configuredModel && models.some((model) => modelName(model) === configuredModel)
+      ? configuredModel
+      : models.length > 0 ? modelName(models[0]) : "";
+    setSelectedModel(nextModel);
+    setCurrentModelAlias(modelAlias(nextModel === configuredModel ? settings.modelAlias : "", nextModel));
+    setMode(settings.defaultMode);
+    followMessagesRef.current = true;
     setMessages([]);
     setLastMetrics(null);
     setLastElapsedMs(null);
@@ -329,6 +547,7 @@ export default function App() {
   async function sendMessage() {
     const text = draft.trim();
     if (!selectedModel || !text || busy || warming || loadingConversation) return;
+    const activeModelAlias = modelAlias(currentModelAlias, selectedModel);
 
     const history: ChatMessage[] = [
       ...messages.filter((message) => message.role === "user" || message.role === "assistant").map(toChatMessage),
@@ -338,12 +557,30 @@ export default function App() {
       ? trimHistoryForFastMode(history, profile.maxHistoryTokens).messages
       : history;
     const requestId = newId("chat");
+    requestUserStartedAt.current = performance.now();
+    recordDiagnostic(requestId, "T0", { mode, elapsedFromT0Ms: 0 });
     const conversationId = conversationIdRef.current ?? newId("conversation");
     const hadConversation = Boolean(conversationIdRef.current);
     const user: ConversationMessage = { id: newId("user"), role: "user", content: text, status: "done", createdAt: new Date().toISOString() };
-    const assistant: ConversationMessage = { id: newId("assistant"), role: "assistant", content: "", status: "streaming" };
+    const assistant: ConversationMessage = {
+      id: newId("assistant"),
+      role: "assistant",
+      content: "",
+      status: "streaming",
+      modelAlias: activeModelAlias,
+    };
+    const persistedUser: PersistedMessageInput = {
+      id: user.id,
+      conversationId,
+      role: "user",
+      content: user.content,
+      thinking: null,
+      status: "done",
+      createdAt: user.createdAt,
+    };
 
     setMessages((current) => [...current, user, assistant]);
+    followMessagesRef.current = true;
     setDraft("");
     setError(null);
     setLastMetrics(null);
@@ -352,25 +589,57 @@ export default function App() {
     activeRequestId.current = requestId;
     requestConversationId.current = conversationId;
     assistantBuffer.current = { requestId, conversationId, id: assistant.id, content: "", thinking: "", metrics: null };
+    streamEventCount.current = 0;
+    lastStreamSequence.current = null;
+    paintState.current.set(requestId, { first: false, twenty: false, terminal: false });
+    streamCoalescer.current?.dispose();
+    streamCoalescer.current = createStreamCoalescer(applyAssistantSnapshot);
+    recordDiagnostic(requestId, "T1", {
+      mode,
+      elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
+    });
 
     try {
+      const storageStartedAt = performance.now();
+      recordDiagnostic(requestId, "storage-start", {
+        elapsedFromT0Ms: storageStartedAt - requestUserStartedAt.current,
+        newConversation: !conversationIdRef.current,
+      });
       if (!conversationIdRef.current) {
         conversationIdRef.current = conversationId;
         setCurrentConversationId(conversationId);
-        await createConversation(conversationId, selectedModel, mode);
+        const detail = await createConversationWithMessage(
+          conversationId,
+          selectedModel,
+          mode,
+          persistedUser,
+          undefined,
+          activeModelAlias,
+        );
+        if (!searchRef.current.trim()) {
+          setConversations((current) => [
+            detail.conversation,
+            ...current.filter((conversation) => conversation.id !== detail.conversation.id),
+          ]);
+        }
+        setCurrentModelAlias(detail.conversation.modelAlias);
+      } else {
+        await saveMessage(persistedUser);
       }
-      await saveMessage({
-        id: user.id,
-        conversationId,
-        role: "user",
-        content: user.content,
-        thinking: null,
-        status: "done",
-        createdAt: user.createdAt,
+      recordDiagnostic(requestId, "storage-done", {
+        storageMs: performance.now() - storageStartedAt,
+        elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
       });
       requestStartedAt.current = performance.now();
+      recordDiagnostic(requestId, "T2-invoke", {
+        mode,
+        elapsedFromT0Ms: requestStartedAt.current - requestUserStartedAt.current,
+      });
       await startChat(selectedModel, prepared, mode, requestId);
-      await loadConversations(search);
+      recordDiagnostic(requestId, "T2-invoke-return", {
+        invokeMs: performance.now() - requestStartedAt.current,
+        elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
+      });
     } catch (startError) {
       const message = errorText(startError);
       setMessages((current) => current.map((item) => item.id === assistant.id ? { ...item, status: "error", error: message } : item));
@@ -382,6 +651,8 @@ export default function App() {
       activeRequestId.current = null;
       requestConversationId.current = null;
       assistantBuffer.current = null;
+      streamCoalescer.current?.dispose();
+      streamCoalescer.current = null;
       setBusy(false);
     }
   }
@@ -397,7 +668,7 @@ export default function App() {
     }
   }
 
-  async function copyMessage(message: ConversationMessage) {
+  async function copyMessage(message: Pick<ConversationMessage, "id" | "content">) {
     try {
       await navigator.clipboard.writeText(message.content);
       setCopiedId(message.id);
@@ -473,7 +744,15 @@ export default function App() {
       const saved = await updateSettings(settingsDraft);
       setSettings(saved);
       setSettingsDraft(saved);
-      if (!busy) setMode(saved.defaultMode);
+      if (!busy && !conversationIdRef.current) {
+        setMode(saved.defaultMode);
+        const configuredModel = saved.defaultModel.trim();
+        const nextModel = configuredModel && models.some((model) => modelName(model) === configuredModel)
+          ? configuredModel
+          : models.length > 0 ? modelName(models[0]) : "";
+        setSelectedModel(nextModel);
+        setCurrentModelAlias(modelAlias(nextModel === configuredModel ? saved.modelAlias : "", nextModel));
+      }
       setShowSettings(false);
     } catch (settingsError) {
       setError(errorText(settingsError));
@@ -485,6 +764,25 @@ export default function App() {
   const submitDisabled = !selectedModel || !draft.trim() || busy || warming || loadingConversation;
 
   return (
+    <div className="app-window">
+      <header className="window-bar">
+        <div
+          className="window-drag-region"
+          data-tauri-drag-region
+          onMouseDown={handleWindowDrag}
+          onDoubleClick={toggleWindowMaximize}
+        >
+          <span className="window-brand-mark">O</span>
+          <strong>Ollmin</strong>
+          <span>本地 Ollama</span>
+        </div>
+        <div className="window-controls" aria-label="窗口控制">
+          <button type="button" className="window-control" title="最小化" aria-label="最小化" onMouseDown={(event) => event.stopPropagation()} onClick={minimizeWindow}>−</button>
+          <button type="button" className="window-control" title="最大化" aria-label="最大化" onMouseDown={(event) => event.stopPropagation()} onClick={toggleWindowMaximize}>□</button>
+          <button type="button" className="window-control close" title="关闭" aria-label="关闭" onMouseDown={(event) => event.stopPropagation()} onClick={closeWindow}>×</button>
+        </div>
+      </header>
+
     <main className="chat-shell">
       <aside className="sidebar">
         <div className="brand">
@@ -510,7 +808,7 @@ export default function App() {
             <div className={`session-item ${conversation.id === currentConversationId ? "selected" : ""}`} key={conversation.id}>
               <button className="session-main" onClick={() => void selectConversation(conversation)} disabled={busy || loadingConversation}>
                 <strong>{conversation.title}</strong>
-                <small>{conversation.model} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
+                <small>{modelAlias(conversation.modelAlias, conversation.model)} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
               </button>
               <div className="session-actions">
                 <button title="删除会话" onClick={() => void removeConversation(conversation)} disabled={busy}>×</button>
@@ -520,8 +818,8 @@ export default function App() {
         </div>
 
         <div className="sidebar-section model-section">
-          <label htmlFor="model">模型 {messages.length > 0 ? "（新建对话后可切换）" : ""}</label>
-          <select id="model" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={busy || warming || models.length === 0 || messages.length > 0}>
+          <label htmlFor="model">模型</label>
+          <select id="model" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAlias(nextModel === settings.defaultModel ? settings.modelAlias : "", nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
             {models.length === 0 ? <option value="">没有检测到模型</option> : null}
             {models.map((model) => {
               const name = modelName(model);
@@ -533,8 +831,7 @@ export default function App() {
               {warming ? "预热中…" : "常驻"}
             </button>
             <div className="mode-control">
-              <label htmlFor="mode">性能模式</label>
-              <select id="mode" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy}>
+              <select id="mode" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy}>
                 {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
               </select>
             </div>
@@ -551,7 +848,7 @@ export default function App() {
         <header className="conversation-header">
           <div>
             <p className="section-kicker">{selectedConversation?.title ?? "新对话"}</p>
-            <h2>{selectedModel || "选择一个本地模型"}</h2>
+            <h2>{currentModelAlias || selectedModel || "选择一个本地模型"}</h2>
           </div>
           <div className="conversation-header-actions">
             {currentConversationId ? <>
@@ -563,33 +860,26 @@ export default function App() {
 
         {error ? <div className="error-box"><strong>请求提示</strong><span>{error}</span><small>本地数据保存在应用数据目录；Ollama 仅连接 127.0.0.1:11434。</small></div> : null}
 
-        <div className="message-list" aria-live="polite">
-          {loadingConversation ? <div className="empty-state"><div className="empty-icon">…</div><h3>正在恢复会话</h3></div> : messages.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">⌁</div>
-              <h3>开始一段本地对话</h3>
-              <p>会话会保存在本机 SQLite。快速模式默认关闭思考并严格裁剪历史；思考内容默认不落盘。</p>
-            </div>
-          ) : messages.map((message) => (
-            <article className={`message ${message.role} ${message.status}`} key={message.id}>
-              <div className="message-meta">
-                <span>{message.role === "user" ? "你" : "模型"}</span>
-                {message.status === "streaming" ? <span className="streaming-label">生成中…</span> : null}
-                {message.status === "cancelled" ? <span>已停止</span> : null}
-                {message.status === "error" ? <span>失败</span> : null}
+        <Profiler id="message-list" onRender={handleMessageRender}>
+          <div ref={messageListRef} className="message-list" onScroll={handleMessageListScroll} aria-live="polite">
+            {loadingConversation ? <div className="empty-state"><div className="empty-icon">…</div><h3>正在恢复会话</h3></div> : messages.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">⌁</div>
+                <h3>开始一段本地对话</h3>
+                <p>会话会保存在本机 SQLite。快速模式默认关闭思考并严格裁剪历史；思考内容默认不落盘。</p>
               </div>
-              {message.role === "assistant" && message.thinking ? <details className="thinking-block" open={message.status === "streaming"}><summary>思考过程</summary><p>{message.thinking}</p></details> : null}
-              <div className="message-content">
-                {message.role === "assistant" ? <MarkdownContent content={message.content} /> : <p>{message.content}</p>}
-                {message.status === "streaming" ? <span className="cursor" /> : null}
-              </div>
-              {message.error ? <p className="message-error">{message.error}</p> : null}
-              {message.role === "assistant" && message.content ? <button className="copy-button" onClick={() => void copyMessage(message)}>{copiedId === message.id ? "已复制" : "复制"}</button> : null}
-            </article>
-          ))}
-        </div>
+            ) : messages.map((message) => (
+              <MessageItem
+                key={message.id}
+                message={message}
+                copied={copiedId === message.id}
+                onCopy={copyMessage}
+              />
+            ))}
+          </div>
+        </Profiler>
 
-        {lastMetrics ? <div className="metrics-strip"><span>加载 {formatMetric(lastMetrics.loadMs, 0)} ms</span><span>提示词 {lastMetrics.promptTokens ?? "—"} token · {formatMetric(lastMetrics.promptMs, 0)} ms</span><span>输出 {lastMetrics.outputTokens ?? "—"} token · 思考字符 {lastMetrics.thinkingCharacters}</span></div> : null}
+        {lastMetrics ? <div className="metrics-strip"><span>加载 {formatMetric(lastMetrics.loadMs, 0)} ms</span><span>提示词 {lastMetrics.promptTokens ?? "—"} token · {formatMetric(lastMetrics.promptMs, 0)} ms</span><span>输出 {lastMetrics.outputTokens ?? "—"} token · 思考字符 {lastMetrics.thinkingCharacters}</span>{lastMetrics.stopReason === "length" ? <span className="metrics-warning" title="Ollama 因达到 num_predict 上限结束生成">已达到输出上限</span> : null}</div> : null}
 
         <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
           <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先在左侧选择一个模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
@@ -608,6 +898,17 @@ export default function App() {
           <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
             {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
           </select>
+          <label htmlFor="settings-model">新会话模型</label>
+          <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
+            <option value="">自动选择第一个可用模型</option>
+            {models.map((model) => {
+              const name = modelName(model);
+              return <option key={name} value={name}>{name}</option>;
+            })}
+          </select>
+          <label htmlFor="model-alias">模型别名</label>
+          <input id="model-alias" value={settingsDraft.modelAlias} maxLength={80} placeholder="留空则使用模型原名" onChange={(event) => setSettingsDraft((current) => ({ ...current, modelAlias: event.target.value }))} />
+          <p className="settings-note">选择的模型和别名将在下一个新会话中生效。</p>
           <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
           <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
           <div className="settings-export">
@@ -623,5 +924,6 @@ export default function App() {
         </section>
       </div> : null}
     </main>
+    </div>
   );
 }

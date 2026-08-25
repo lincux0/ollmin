@@ -40,7 +40,7 @@ function Measure-Case {
     keep_alive = "30m"
     options = @{
       num_ctx = 4096
-      num_predict = 384
+      num_predict = 768
       temperature = 0.7
     }
   }

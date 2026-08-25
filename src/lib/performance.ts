@@ -13,7 +13,7 @@ export interface PerformanceProfile {
 }
 /**
  * Fast mode is intentionally conservative: no reasoning, a bounded context,
- * and a short output budget. These values are part of the request contract so
+ * and a bounded output budget. These values are part of the request contract so
  * a future chat screen cannot silently fall back to an expensive profile.
  */
 export const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> = {
@@ -23,7 +23,7 @@ export const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> =
     description: "关闭思考，最多保留约 2048 个历史 token",
     think: false,
     numCtx: 4096,
-    numPredict: 384,
+    numPredict: 2048,
     maxHistoryTokens: 2048,
   },
   balanced: {

@@ -14,7 +14,7 @@ $baseUri = "http://127.0.0.1:11434"
 
 $profiles = @(
   [PSCustomObject]@{
-    Key = "fast"; Label = "快速"; Think = $false; NumCtx = 4096; NumPredict = 384
+    Key = "fast"; Label = "快速"; Think = $false; NumCtx = 4096; NumPredict = 768
   },
   [PSCustomObject]@{
     Key = "balanced"; Label = "平衡"; Think = $true; NumCtx = 4096; NumPredict = 768
@@ -310,7 +310,7 @@ try {
     "- 模型：$Model",
     "- 提示词标签：$PromptLabel",
     "- 每个客户端/模式：预热 1 次，正式测量 $Runs 次；以下为正式测量结果。",
-    "- 固定参数：temperature=0.7；快速 think=false/ctx=4096/predict=384；平衡 think=true/ctx=4096/predict=768；推理 think=true/ctx=8192/predict=2048。",
+    "- 固定参数：temperature=0.7；快速 think=false/ctx=4096/predict=768；平衡 think=true/ctx=4096/predict=768；推理 think=true/ctx=8192/predict=2048。",
     "- 开始测试前 /api/ps 已加载模型数：$($psBefore.models.Count)。",
     "",
     "## 中位数与 P95",

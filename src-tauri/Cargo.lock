@@ -2199,6 +2199,7 @@ dependencies = [
 name = "ollmin"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "futures-util",
  "reqwest 0.12.28",
  "rusqlite",

@@ -55,8 +55,22 @@ export interface ChatStreamPayload {
   thinking: string;
   done: boolean;
   cancelled: boolean;
+  sequence?: number;
   error?: string;
   response?: ChatResponse;
+}
+
+export interface ChatDiagnosticPayload {
+  request_id: string;
+  phase: string;
+  elapsed_ms: number;
+  first_byte_ms?: number;
+  first_line_ms?: number;
+  first_emit_ms?: number;
+  final_emit_ms?: number;
+  bytes_received?: number;
+  parsed_events?: number;
+  emitted_events?: number;
 }
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -65,6 +79,7 @@ export interface ConversationSummary {
   id: string;
   title: string;
   model: string;
+  modelAlias: string;
   mode: import("./lib/performance").PerformanceMode;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +117,8 @@ export interface AppSettings {
   theme: ThemeMode;
   saveThinking: boolean;
   defaultMode: import("./lib/performance").PerformanceMode;
+  defaultModel: string;
+  modelAlias: string;
 }
 
 export interface ExportPayload {
@@ -120,6 +137,8 @@ export interface ChatMetrics {
   outputTokens: number | null;
   outputTokensPerSecond: number | null;
   thinkingCharacters: number;
+  /** Ollama's terminal reason, e.g. "stop" or "length". */
+  stopReason?: string | null;
 }
 
 export interface DiagnosticResult {

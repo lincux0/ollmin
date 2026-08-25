@@ -12,6 +12,7 @@ describe("chat metrics", () => {
         prompt_eval_count: 32,
         eval_count: 20,
         message: { role: "assistant", content: "ok", thinking: "plan" },
+        done_reason: "stop",
       },
       2100,
     );
@@ -21,6 +22,11 @@ describe("chat metrics", () => {
     expect(metrics.promptTokens).toBe(32);
     expect(metrics.outputTokensPerSecond).toBe(20);
     expect(metrics.thinkingCharacters).toBe(4);
+    expect(metrics.stopReason).toBe("stop");
+  });
+
+  it("preserves a length stop reason so the UI can explain truncation", () => {
+    expect(deriveChatMetrics({ done_reason: "length" }, 100).stopReason).toBe("length");
   });
 
   it("returns null for absent or invalid durations", () => {

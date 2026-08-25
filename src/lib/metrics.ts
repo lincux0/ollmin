@@ -28,6 +28,7 @@ export function deriveChatMetrics(response: ChatResponse, wallMs: number): ChatM
         ? outputTokens / evalSeconds
         : null,
     thinkingCharacters: response.message?.thinking?.length ?? 0,
+    stopReason: response.done_reason ?? null,
   };
 }
 
