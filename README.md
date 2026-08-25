@@ -128,10 +128,6 @@ npm run tauri -- build
 - 不包含遥测、账号体系、云端同步和后台模型请求；
 - 模型输出不会被当作 HTML、命令、脚本或工具调用执行。
 
-## Release notes
-
-当前版本的功能、改进和已知限制见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
-
 ## 常见问题
 
 ### 客户端显示 Ollama 未连接
