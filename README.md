@@ -7,7 +7,14 @@
 </p>
 
 <p align="center">
-  Tauri 2 · React 19 · TypeScript · Rust · SQLite · Ollama
+  <img src="https://img.shields.io/badge/release-v0.1.0-2d7d68?style=flat-square" alt="release v0.1.0">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&amp;logo=windows&amp;logoColor=white" alt="Windows 10/11">
+  <img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&amp;logo=tauri&amp;logoColor=white" alt="Tauri 2">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&amp;logo=react&amp;logoColor=20232A" alt="React 19">
+  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript 5">
+  <img src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust 2021">
+  <img src="https://img.shields.io/badge/SQLite-local-003B57?style=flat-square&amp;logo=sqlite&amp;logoColor=white" alt="SQLite local">
+  <img src="https://img.shields.io/badge/Ollama-local-111111?style=flat-square" alt="Ollama local">
 </p>
 
 Ollmin 的目标不是把聊天客户端做得更复杂，而是让本地 Ollama 的一次对话尽量接近 `ollama run` 的体验：少发不必要的上下文，默认避免无关思考和后台请求，保持单请求生成，并把等待原因和真实性能指标展示出来。
