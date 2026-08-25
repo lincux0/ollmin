@@ -31,6 +31,12 @@ Ollmin 是一个 Windows 本地优先桌面客户端，直接连接本机 `127.0
 - 加载、提示词预填充、输出 token、tok/s、思考字符和终止原因等指标；
 - 流式事件批处理、前端更新合并、Debug 诊断和自定义无边框标题栏。
 
+## 界面预览
+
+<p align="center">
+  <img src="assets/ollmin-ui.png" alt="Ollmin 本地聊天界面" width="1000">
+</p>
+
 ## 运行前准备
 
 需要：
@@ -53,7 +59,7 @@ ollama pull qwen3:4b
 ## 快速开始
 
 ```powershell
-git clone <your-repository-url>
+git clone https://github.com/lincux0/ollmin.git
 cd ollmin
 npm install
 npm run tauri -- dev
@@ -90,8 +96,6 @@ Rust 后端
 Ollama /api/*                本地会话、设置和导出数据
 ```
 
-更多模块职责、事件流、数据模型和文件说明见 [docs/architecture.md](docs/architecture.md)。重大技术取舍见 [docs/decision.md](docs/decision.md)。
-
 ## 构建和测试
 
 ```powershell
@@ -124,17 +128,9 @@ npm run tauri -- build
 - 不包含遥测、账号体系、云端同步和后台模型请求；
 - 模型输出不会被当作 HTML、命令、脚本或工具调用执行。
 
-## 项目文档
+## Release notes
 
-| 文档 | 内容 |
-| --- | --- |
-| [架构说明](docs/architecture.md) | 项目基本情况、运行架构、文件结构、数据模型和维护边界 |
-| [技术决策](docs/decision.md) | 已落地的重大技术选择、原因、代价和未采用方向 |
-| [产品方案](docs/plan.md) | 产品定位、性能原则和阶段计划 |
-| [前端链路优化计划](docs/frontend-pipeline-optimization-plan.md) | Ollama 到前端显示链路的优化阶段 |
-| [基准协议](docs/benchmark-protocol.md) | CLI、原生 API 和客户端的性能测试约束 |
-| [用户感知测试方案](docs/user-perceived-benchmark-plan.md) | 模拟真实用户体感的测试方法 |
-| `benchmarks/` | 已执行的本地基准报告 |
+当前版本的功能、改进和已知限制见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
 ## 常见问题
 
