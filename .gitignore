@@ -15,3 +15,8 @@ graphify-out/
 *.sqlite3-*
 *.db
 *.db-*
+
+# 本地维护文档与测试报告不发布到公共仓库
+AGENTS.md
+docs/
+benchmarks/
