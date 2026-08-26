@@ -164,7 +164,25 @@ function parseList(
     index += 1;
 
     while (index < lines.length) {
-      if (lines[index].trim() === "") break;
+      if (lines[index].trim() === "") {
+        // CommonMark allows blank lines between items in the same list. Keep
+        // the list open when the next non-empty line has the same level and
+        // marker kind; otherwise let the outer block parser handle it.
+        let lookahead = index;
+        while (lookahead < lines.length && lines[lookahead].trim() === "") {
+          lookahead += 1;
+        }
+        const nextAfterBlank =
+          lookahead < lines.length ? listItem(lines[lookahead]) : null;
+        if (
+          nextAfterBlank &&
+          nextAfterBlank.indent === baseIndent &&
+          isOrderedMarker(nextAfterBlank.marker) === ordered
+        ) {
+          index = lookahead;
+        }
+        break;
+      }
       const nextItem = listItem(lines[index]);
       if (nextItem) {
         if (nextItem.indent <= baseIndent) break;

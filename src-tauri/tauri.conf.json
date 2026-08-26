@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Ollmin 诊断",
+        "title": "Ollmin",
         "width": 1180,
         "height": 820,
         "minWidth": 860,

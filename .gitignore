@@ -3,6 +3,7 @@ dist/
 .tauri/
 .npm-cache/
 src-tauri/target/
+src-tauri/target-final/
 src-tauri/gen/
 *.local
 *.log

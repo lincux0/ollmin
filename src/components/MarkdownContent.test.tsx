@@ -33,6 +33,20 @@ describe("MarkdownContent", () => {
     expect(html).toContain('href="https://example.com"');
   });
 
+  it("keeps same-level list items together across blank lines", () => {
+    const orderedHtml = renderToStaticMarkup(
+      <MarkdownContent content={`1. 历史\n\n1. 地理\n\n1. 人口`} />,
+    );
+    const unorderedHtml = renderToStaticMarkup(
+      <MarkdownContent content={`- 历史\n\n- 地理\n\n- 人口`} />,
+    );
+
+    expect(orderedHtml.match(/<ol>/g)).toHaveLength(1);
+    expect(orderedHtml.match(/<li>/g)).toHaveLength(3);
+    expect(unorderedHtml.match(/<ul>/g)).toHaveLength(1);
+    expect(unorderedHtml.match(/<li>/g)).toHaveLength(3);
+  });
+
   it("keeps formulas and code as escaped plain text instead of interpreting them", () => {
     const html = renderToStaticMarkup(
       <MarkdownContent content="$E=mc^2$ `const value = 1`\n\n```ts\nconst answer = 42;\n```" />,

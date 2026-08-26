@@ -817,29 +817,10 @@ export default function App() {
           ))}
         </div>
 
-        <div className="sidebar-section model-section">
-          <label htmlFor="model">模型</label>
-          <select id="model" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAlias(nextModel === settings.defaultModel ? settings.modelAlias : "", nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
-            {models.length === 0 ? <option value="">没有检测到模型</option> : null}
-            {models.map((model) => {
-              const name = modelName(model);
-              return <option key={name} value={name}>{name}</option>;
-            })}
-          </select>
-          <div className="model-mode-row">
-            <button className="secondary-button warm-button" onClick={() => void runWarmup()} disabled={!selectedModel || warming || busy}>
-              {warming ? "预热中…" : "常驻"}
-            </button>
-            <div className="mode-control">
-              <select id="mode" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy}>
-                {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-              </select>
-            </div>
-          </div>
-        </div>
-
         <div className="sidebar-bottom">
-          <button className="ghost-button" onClick={() => void refreshConnection()} disabled={busy || warming}>刷新连接</button>
+          <button className="ghost-button warm-button" onClick={() => void runWarmup()} disabled={!selectedModel || warming || busy}>
+            {warming ? "预热中…" : "常驻"}
+          </button>
           <button className="ghost-button" onClick={() => { setSettingsDraft(settings); setShowSettings(true); }} disabled={busy}>设置</button>
         </div>
       </aside>
@@ -851,6 +832,7 @@ export default function App() {
             <h2>{currentModelAlias || selectedModel || "选择一个本地模型"}</h2>
           </div>
           <div className="conversation-header-actions">
+            <span className="context-size" title={`当前性能模式的上下文窗口：${profile.numCtx.toLocaleString()} token`}>上下文 {profile.numCtx.toLocaleString()} token</span>
             {currentConversationId ? <>
               <button className="header-button" onClick={renameCurrentConversation} disabled={busy}>重命名</button>
             </> : null}
@@ -882,14 +864,37 @@ export default function App() {
         {lastMetrics ? <div className="metrics-strip"><span>加载 {formatMetric(lastMetrics.loadMs, 0)} ms</span><span>提示词 {lastMetrics.promptTokens ?? "—"} token · {formatMetric(lastMetrics.promptMs, 0)} ms</span><span>输出 {lastMetrics.outputTokens ?? "—"} token · 思考字符 {lastMetrics.thinkingCharacters}</span>{lastMetrics.stopReason === "length" ? <span className="metrics-warning" title="Ollama 因达到 num_predict 上限结束生成">已达到输出上限</span> : null}</div> : null}
 
         <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
-          <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先在左侧选择一个模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
-          <div className="composer-actions"><span>{busy ? "正在接收本地流… · Esc 停止" : ""}</span>{busy ? <button type="button" className="stop-button" onClick={() => void cancelMessage()}>停止</button> : null}<button type="submit" className="primary-button" disabled={submitDisabled}>{busy ? "生成中…" : "发送"}</button></div>
+          <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
+          <div className="composer-toolbar">
+            <div className="composer-selection" aria-label="模型与性能模式">
+              <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAlias(nextModel === settings.defaultModel ? settings.modelAlias : "", nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
+                {models.length === 0 ? <option value="">没有检测到模型</option> : null}
+                {models.map((model) => {
+                  const name = modelName(model);
+                  return <option key={name} value={name}>{name}</option>;
+                })}
+              </select>
+              <span className="composer-selection-divider" aria-hidden="true">·</span>
+              <select className="composer-select mode-select" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy || warming || loadingConversation}>
+                {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
+              </select>
+            </div>
+            <div className="composer-toolbar-actions">
+              <span className="composer-status">{busy ? "正在接收本地流… · Esc 停止" : ""}</span>
+              {busy ? <button type="button" className="stop-button" onClick={() => void cancelMessage()}>停止</button> : null}
+              <button type="submit" className="send-button" aria-label={busy ? "生成中" : "发送"} disabled={submitDisabled}>{busy ? "…" : "↑"}</button>
+            </div>
+          </div>
         </form>
       </section>
 
       {showSettings ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettings(false)}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
           <div className="modal-heading"><div><p className="section-kicker">本地设置</p><h2 id="settings-title">Ollmin 设置</h2></div><button className="modal-close" onClick={() => setShowSettings(false)}>×</button></div>
+          <div className="settings-connection">
+            <button className="ghost-button" onClick={() => void refreshConnection()} disabled={busy || warming}>刷新连接</button>
+            <span>{status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}</span>
+          </div>
           <label htmlFor="theme">主题</label>
           <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
             <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
