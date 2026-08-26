@@ -78,7 +78,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   saveThinking: false,
   defaultMode: "fast",
   defaultModel: "",
-  modelAlias: "",
+  modelAliases: {},
 };
 
 function modelName(model: OllamaModel): string {
@@ -87,6 +87,17 @@ function modelName(model: OllamaModel): string {
 
 function modelAlias(alias: string | undefined, model: string): string {
   return alias?.trim() || model;
+}
+
+function modelAliasFor(
+  aliases: Record<string, string> | undefined,
+  model: string,
+  fallback?: string,
+): string {
+  if (aliases && Object.prototype.hasOwnProperty.call(aliases, model)) {
+    return modelAlias(aliases[model], model);
+  }
+  return modelAlias(fallback, model);
 }
 
 function errorText(error: unknown): string {
@@ -292,8 +303,8 @@ export default function App() {
         ? selectedModel
         : modelName(models[0]);
     if (preferred !== selectedModel) setSelectedModel(preferred);
-    setCurrentModelAlias(modelAlias(preferred === configured ? settings.modelAlias : "", preferred));
-  }, [busy, models, settings.defaultModel, settings.modelAlias]);
+    setCurrentModelAlias(modelAliasFor(settings.modelAliases, preferred));
+  }, [busy, models, settings.defaultModel, settings.modelAliases, selectedModel]);
 
   useEffect(() => () => {
     streamCoalescer.current?.dispose();
@@ -507,10 +518,11 @@ export default function App() {
       conversationIdRef.current = detail.conversation.id;
       setCurrentConversationId(detail.conversation.id);
       setSelectedModel(detail.conversation.model);
-      setCurrentModelAlias(modelAlias(detail.conversation.modelAlias, detail.conversation.model));
+      const activeAlias = modelAliasFor(settings.modelAliases, detail.conversation.model, detail.conversation.modelAlias);
+      setCurrentModelAlias(activeAlias);
       setMode(safeMode(detail.conversation.mode));
       followMessagesRef.current = true;
-      const restored = detail.messages.map((message) => fromStoredMessage(message, detail.conversation.modelAlias));
+      const restored = detail.messages.map((message) => fromStoredMessage(message, activeAlias));
       setMessages(restored);
       const lastWithMetrics = [...detail.messages].reverse().find((message) => message.metrics);
       setLastMetrics(lastWithMetrics?.metrics ?? null);
@@ -533,7 +545,7 @@ export default function App() {
       ? configuredModel
       : models.length > 0 ? modelName(models[0]) : "";
     setSelectedModel(nextModel);
-    setCurrentModelAlias(modelAlias(nextModel === configuredModel ? settings.modelAlias : "", nextModel));
+    setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel));
     setMode(settings.defaultMode);
     followMessagesRef.current = true;
     setMessages([]);
@@ -751,7 +763,13 @@ export default function App() {
           ? configuredModel
           : models.length > 0 ? modelName(models[0]) : "";
         setSelectedModel(nextModel);
-        setCurrentModelAlias(modelAlias(nextModel === configuredModel ? saved.modelAlias : "", nextModel));
+        setCurrentModelAlias(modelAliasFor(saved.modelAliases, nextModel));
+      } else if (selectedModel) {
+        const activeAlias = modelAliasFor(saved.modelAliases, selectedModel, currentModelAlias);
+        setCurrentModelAlias(activeAlias);
+        setMessages((current) => current.map((message) => message.role === "assistant"
+          ? { ...message, modelAlias: activeAlias }
+          : message));
       }
       setShowSettings(false);
     } catch (settingsError) {
@@ -808,7 +826,7 @@ export default function App() {
             <div className={`session-item ${conversation.id === currentConversationId ? "selected" : ""}`} key={conversation.id}>
               <button className="session-main" onClick={() => void selectConversation(conversation)} disabled={busy || loadingConversation}>
                 <strong>{conversation.title}</strong>
-                <small>{modelAlias(conversation.modelAlias, conversation.model)} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
+                <small>{modelAliasFor(settings.modelAliases, conversation.model, conversation.modelAlias)} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
               </button>
               <div className="session-actions">
                 <button title="删除会话" onClick={() => void removeConversation(conversation)} disabled={busy}>×</button>
@@ -867,7 +885,7 @@ export default function App() {
           <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
           <div className="composer-toolbar">
             <div className="composer-selection" aria-label="模型与性能模式">
-              <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAlias(nextModel === settings.defaultModel ? settings.modelAlias : "", nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
+              <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
                 {models.length === 0 ? <option value="">没有检测到模型</option> : null}
                 {models.map((model) => {
                   const name = modelName(model);
@@ -911,9 +929,30 @@ export default function App() {
               return <option key={name} value={name}>{name}</option>;
             })}
           </select>
-          <label htmlFor="model-alias">模型别名</label>
-          <input id="model-alias" value={settingsDraft.modelAlias} maxLength={80} placeholder="留空则使用模型原名" onChange={(event) => setSettingsDraft((current) => ({ ...current, modelAlias: event.target.value }))} />
-          <p className="settings-note">选择的模型和别名将在下一个新会话中生效。</p>
+          <label>已有模型别名</label>
+          <div className="model-alias-list">
+            {models.length === 0 ? <p className="settings-note">暂无可用模型，请先刷新连接。</p> : models.map((model) => {
+              const name = modelName(model);
+              const alias = Object.prototype.hasOwnProperty.call(settingsDraft.modelAliases, name)
+                ? settingsDraft.modelAliases[name]
+                : "";
+              return (
+                <div className="model-alias-row" key={name}>
+                  <span className="model-alias-name" title={name}>{name}</span>
+                  <input
+                    aria-label={`${name} 的别名`}
+                    value={alias}
+                    maxLength={80}
+                    placeholder="使用原名"
+                    onChange={(event) => setSettingsDraft((current) => ({
+                      ...current,
+                      modelAliases: { ...current.modelAliases, [name]: event.target.value },
+                    }))}
+                  />
+                </div>
+              );
+            })}
+          </div>
           <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
           <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
           <div className="settings-export">

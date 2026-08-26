@@ -4,6 +4,7 @@ dist/
 .npm-cache/
 src-tauri/target/
 src-tauri/target-final/
+src-tauri/target-alias-build/
 src-tauri/gen/
 *.local
 *.log

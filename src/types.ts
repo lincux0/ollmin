@@ -118,7 +118,7 @@ export interface AppSettings {
   saveThinking: boolean;
   defaultMode: import("./lib/performance").PerformanceMode;
   defaultModel: string;
-  modelAlias: string;
+  modelAliases: Record<string, string>;
 }
 
 export interface ExportPayload {

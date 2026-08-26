@@ -169,6 +169,10 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 .settings-connection .ghost-button { flex: 0 0 auto; padding: 6px 9px; }
 .settings-modal label:not(.check-row) { margin-top: 14px; }
 .settings-modal select { margin-bottom: 3px; }
+.model-alias-list { display: grid; gap: 7px; margin-top: 8px; }
+.model-alias-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 9px; padding: 8px 9px; border: 1px solid #e5dcd3; border-radius: 9px; background: #f8f2ed; }
+.model-alias-name { overflow: hidden; color: #655d55; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.model-alias-row input { width: 100%; min-width: 0; margin: 0; padding: 7px 8px; border-color: #dcd2c8; background: #fffdfa; font-size: 11px; }
 .check-row { display: flex; align-items: center; gap: 8px; margin-top: 17px; color: #5a5048; font-size: 12px; font-weight: 700; line-height: 1.4; }
 .check-row input { width: 15px; height: 15px; accent-color: #d97757; }
 .settings-note { margin: 8px 0 0; color: #918880; font-size: 10px; line-height: 1.55; }
@@ -229,6 +233,8 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 [data-theme="dark"] .modal-backdrop { background: rgba(12, 10, 8, 0.58); }
 [data-theme="dark"] .settings-modal { border-color: #4a433a; background: #2a2723; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38); }
 [data-theme="dark"] .settings-connection { border-color: #4a433a; background: #302b26; color: #aaa096; }
+[data-theme="dark"] .model-alias-row { border-color: #4a433a; background: #302b26; }
+[data-theme="dark"] .model-alias-name { color: #d6c9bd; }
 [data-theme="dark"] .modal-close { background: #39332d; color: #d6c9bd; }
 [data-theme="dark"] .check-row { color: #d6c9bd; }
 [data-theme="dark"] .settings-export small { color: #aaa096; }

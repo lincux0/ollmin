@@ -1,10 +1,11 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +60,7 @@ pub struct AppSettings {
     pub save_thinking: bool,
     pub default_mode: String,
     pub default_model: String,
-    pub model_alias: String,
+    pub model_aliases: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,7 +143,7 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
 
-    if applied.unwrap_or(0) < SCHEMA_VERSION {
+    if applied.unwrap_or(0) < 2 {
         let has_model_alias: bool = connection
             .prepare("PRAGMA table_info(conversations)")
             .map_err(|error| format!("读取会话表结构失败：{error}"))?
@@ -169,6 +170,47 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 params![2, timestamp()],
+            )
+            .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
+    }
+
+    if applied.unwrap_or(0) < SCHEMA_VERSION {
+        let legacy_default_model: Option<String> = connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_model'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取旧模型设置失败：{error}"))?;
+        let legacy_alias: Option<String> = connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'model_alias'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取旧模型别名失败：{error}"))?;
+        let mut aliases = BTreeMap::new();
+        if let (Some(model), Some(alias)) = (legacy_default_model, legacy_alias) {
+            let model = model.trim().to_string();
+            let alias: String = alias.trim().chars().take(80).collect();
+            if !model.is_empty() && !alias.is_empty() {
+                aliases.insert(model, alias);
+            }
+        }
+        let aliases_json = serde_json::to_string(&aliases)
+            .map_err(|error| format!("迁移模型别名失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO settings(key, value) VALUES ('model_aliases', ?1)",
+                params![aliases_json],
+            )
+            .map_err(|error| format!("补充模型别名设置失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![3, timestamp()],
             )
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
@@ -439,7 +481,7 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
         save_thinking: false,
         default_mode: "fast".to_string(),
         default_model: String::new(),
-        model_alias: String::new(),
+        model_aliases: BTreeMap::new(),
     };
     let mut statement = connection
         .prepare("SELECT key, value FROM settings")
@@ -456,7 +498,9 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
             "save_thinking" => settings.save_thinking = value == "true",
             "default_mode" => settings.default_mode = value,
             "default_model" => settings.default_model = value,
-            "model_alias" => settings.model_alias = value,
+            "model_aliases" => {
+                settings.model_aliases = serde_json::from_str(&value).unwrap_or_default();
+            }
             _ => {}
         }
     }
@@ -477,16 +521,29 @@ pub fn update_settings(
         return Err("不支持的默认性能模式".to_string());
     }
     settings.default_model = settings.default_model.trim().to_string();
-    settings.model_alias = settings.model_alias.trim().chars().take(80).collect();
-    if settings.default_model.is_empty() {
-        settings.model_alias.clear();
-    }
+    settings.model_aliases = settings
+        .model_aliases
+        .into_iter()
+        .filter_map(|(model, alias)| {
+            let model = model.trim().to_string();
+            if model.is_empty() {
+                return None;
+            }
+            let alias = alias.trim().chars().take(80).collect();
+            Some((model, alias))
+        })
+        .collect();
+    let model_aliases = serde_json::to_string(&settings.model_aliases)
+        .map_err(|error| format!("序列化模型别名失败：{error}"))?;
     for (key, value) in [
         ("theme", settings.theme.clone()),
         ("save_thinking", settings.save_thinking.to_string()),
         ("default_mode", settings.default_mode.clone()),
         ("default_model", settings.default_model.clone()),
-        ("model_alias", settings.model_alias.clone()),
+        ("model_aliases", model_aliases),
+        // Keep the legacy key empty so an older client cannot accidentally
+        // display a stale single-model alias after this migration.
+        ("model_alias", String::new()),
     ] {
         connection
             .execute(
@@ -648,6 +705,7 @@ mod tests {
     };
     use rusqlite::Connection;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     fn database() -> Connection {
         let connection = Connection::open_in_memory().expect("in-memory database");
@@ -677,7 +735,15 @@ mod tests {
         assert!(!settings.save_thinking);
         assert_eq!(settings.default_mode, "fast");
         assert!(settings.default_model.is_empty());
-        assert!(settings.model_alias.is_empty());
+        assert!(settings.model_aliases.is_empty());
+        let aliases: String = connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'model_aliases'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("model aliases setting");
+        assert_eq!(aliases, "{}");
     }
 
     #[test]
@@ -768,7 +834,10 @@ mod tests {
                 save_thinking: true,
                 default_mode: "fast".to_string(),
                 default_model: "qwen3:4b".to_string(),
-                model_alias: "本地助手".to_string(),
+                model_aliases: BTreeMap::from([(
+                    String::from("qwen3:4b"),
+                    String::from("本地助手"),
+                )]),
             },
         )
         .expect("settings");
@@ -884,5 +953,68 @@ mod tests {
         )
         .expect("create aliased conversation with message");
         assert_eq!(detail.conversation.model_alias, "问答助手");
+    }
+
+    #[test]
+    fn model_aliases_are_persisted_per_model_and_normalized() {
+        let connection = database();
+        let settings = update_settings(
+            &connection,
+            AppSettings {
+                theme: "system".to_string(),
+                save_thinking: false,
+                default_mode: "fast".to_string(),
+                default_model: " qwen3:4b ".to_string(),
+                model_aliases: BTreeMap::from([
+                    (" qwen3:4b ".to_string(), " 本地助手 ".to_string()),
+                    ("llama3".to_string(), "".to_string()),
+                    (" ".to_string(), "ignored".to_string()),
+                ]),
+            },
+        )
+        .expect("save model aliases");
+
+        assert_eq!(settings.default_model, "qwen3:4b");
+        assert_eq!(
+            settings.model_aliases.get("qwen3:4b").map(String::as_str),
+            Some("本地助手")
+        );
+        assert_eq!(
+            settings.model_aliases.get("llama3").map(String::as_str),
+            Some("")
+        );
+        assert!(!settings.model_aliases.contains_key(" "));
+
+        let loaded = get_settings(&connection).expect("load model aliases");
+        assert_eq!(loaded.model_aliases, settings.model_aliases);
+    }
+
+    #[test]
+    fn legacy_single_model_alias_is_migrated_to_model_map() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations(version, applied_at) VALUES (2, '0');
+                 CREATE TABLE conversations (
+                   id TEXT PRIMARY KEY NOT NULL,
+                   title TEXT NOT NULL,
+                   model TEXT NOT NULL,
+                   model_alias TEXT NOT NULL DEFAULT '',
+                   mode TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+                 INSERT INTO settings(key, value) VALUES ('default_model', 'qwen3:4b'), ('model_alias', '本地助手');",
+            )
+            .expect("create v2 schema");
+
+        migrate(&connection).expect("upgrade v2 schema");
+        let settings = get_settings(&connection).expect("load migrated settings");
+        assert_eq!(
+            settings.model_aliases.get("qwen3:4b").map(String::as_str),
+            Some("本地助手")
+        );
     }
 }
