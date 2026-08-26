@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,7 +174,7 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
 
-    if applied.unwrap_or(0) < SCHEMA_VERSION {
+    if applied.unwrap_or(0) < 3 {
         let legacy_default_model: Option<String> = connection
             .query_row(
                 "SELECT value FROM settings WHERE key = 'default_model'",
@@ -211,6 +211,38 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 params![3, timestamp()],
+            )
+            .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
+    }
+
+    if applied.unwrap_or(0) < SCHEMA_VERSION {
+        let legacy_ids: Vec<String> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id FROM conversations
+                     WHERE title = '新对话'
+                     ORDER BY created_at ASC, id ASC",
+                )
+                .map_err(|error| format!("准备旧会话名称查询失败：{error}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("读取旧会话名称失败：{error}"))?;
+            rows.map(|row| row.map_err(|error| format!("读取旧会话名称失败：{error}")))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for id in legacy_ids {
+            let title = next_conversation_title(connection)?;
+            connection
+                .execute(
+                    "UPDATE conversations SET title = ?1 WHERE id = ?2",
+                    params![title, id],
+                )
+                .map_err(|error| format!("更新旧会话名称失败：{error}"))?;
+        }
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![4, timestamp()],
             )
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
@@ -277,7 +309,10 @@ fn insert_conversation(
     let mode = required(mode, "性能模式")?;
     validate_mode(&mode)?;
     let now = timestamp();
-    let title = normalize_title(title.unwrap_or("新对话"));
+    let title = match title {
+        Some(value) => normalize_title(value),
+        None => next_conversation_title(connection)?,
+    };
     connection
         .execute(
             "INSERT OR IGNORE INTO conversations(id, title, model, model_alias, mode, created_at, updated_at)
@@ -658,6 +693,27 @@ fn normalize_title(value: &str) -> String {
     title
 }
 
+fn next_conversation_title(connection: &Connection) -> Result<String, String> {
+    let mut statement = connection
+        .prepare("SELECT title FROM conversations WHERE title LIKE '会话%'")
+        .map_err(|error| format!("准备会话名称查询失败：{error}"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("读取会话名称失败：{error}"))?;
+    let mut max_number = 0_u64;
+    for row in rows {
+        let title = row.map_err(|error| format!("读取会话名称失败：{error}"))?;
+        let Some(number) = title
+            .strip_prefix("会话")
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        max_number = max_number.max(number);
+    }
+    Ok(format!("会话{}", max_number.saturating_add(1)))
+}
+
 fn normalize_model_alias(value: &str, model: &str) -> String {
     let alias: String = value.trim().chars().take(80).collect();
     if alias.is_empty() {
@@ -953,6 +1009,75 @@ mod tests {
         )
         .expect("create aliased conversation with message");
         assert_eq!(detail.conversation.model_alias, "问答助手");
+    }
+
+    #[test]
+    fn new_conversations_receive_sequential_titles() {
+        let connection = database();
+        let first = create_conversation_with_alias(
+            &connection,
+            "conversation-title-1",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create first conversation");
+        let second = create_conversation_with_alias(
+            &connection,
+            "conversation-title-2",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create second conversation");
+
+        assert_eq!(first.conversation.title, "会话1");
+        assert_eq!(second.conversation.title, "会话2");
+    }
+
+    #[test]
+    fn migration_renames_legacy_untitled_conversations() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations(version, applied_at) VALUES (3, '0');
+                 CREATE TABLE conversations (
+                   id TEXT PRIMARY KEY NOT NULL,
+                   title TEXT NOT NULL,
+                   model TEXT NOT NULL,
+                   model_alias TEXT NOT NULL DEFAULT '',
+                   mode TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+                 INSERT INTO conversations(id, title, model, mode, created_at, updated_at) VALUES
+                   ('legacy-1', '新对话', 'qwen3:4b', 'fast', '1', '1'),
+                   ('legacy-2', '新对话', 'qwen3:4b', 'fast', '2', '2'),
+                   ('existing-number', '会话1', 'qwen3:4b', 'fast', '3', '3');",
+            )
+            .expect("create legacy schema");
+
+        migrate(&connection).expect("upgrade legacy titles");
+        let first: String = connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id = 'legacy-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read first title");
+        let second: String = connection
+            .query_row(
+                "SELECT title FROM conversations WHERE id = 'legacy-2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read second title");
+        assert_eq!(first, "会话2");
+        assert_eq!(second, "会话3");
     }
 
     #[test]

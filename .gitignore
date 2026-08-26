@@ -5,6 +5,7 @@ dist/
 src-tauri/target/
 src-tauri/target-final/
 src-tauri/target-alias-build/
+src-tauri/target-alias-test/
 src-tauri/gen/
 *.local
 *.log

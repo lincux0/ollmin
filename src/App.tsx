@@ -73,6 +73,12 @@ interface AssistantSnapshot {
   terminal: boolean;
 }
 
+interface SessionContextMenu {
+  conversation: ConversationSummary;
+  x: number;
+  y: number;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   saveThinking: false,
@@ -182,6 +188,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
   const assistantBuffer = useRef<AssistantBuffer | null>(null);
@@ -503,6 +510,14 @@ export default function App() {
     return () => window.removeEventListener("keydown", onShortcut);
   }, [busy]);
 
+  useEffect(() => {
+    const closeContextMenu = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSessionContextMenu(null);
+    };
+    window.addEventListener("keydown", closeContextMenu);
+    return () => window.removeEventListener("keydown", closeContextMenu);
+  }, []);
+
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === currentConversationId),
     [conversations, currentConversationId],
@@ -722,6 +737,7 @@ export default function App() {
     if (!window.confirm(`确定删除“${conversation.title}”及其中的消息吗？`)) return;
     try {
       await deleteConversation(conversation.id);
+      setSessionContextMenu(null);
       if (conversation.id === conversationIdRef.current) startNewConversation();
       await loadConversations(search);
     } catch (deleteError) {
@@ -782,7 +798,7 @@ export default function App() {
   const submitDisabled = !selectedModel || !draft.trim() || busy || warming || loadingConversation;
 
   return (
-    <div className="app-window">
+    <div className="app-window" onClick={() => setSessionContextMenu(null)}>
       <header className="window-bar">
         <div
           className="window-drag-region"
@@ -806,15 +822,16 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark">O</div>
           <div>
-            <p className="eyebrow">本地优先 · 阶段 3</p>
             <h1>Ollmin</h1>
           </div>
         </div>
 
-        <button className="primary-button new-chat-button" onClick={startNewConversation} disabled={busy}>＋ 新建对话 <span>Ctrl+N</span></button>
-        <div className={`status-pill ${status ? "online" : "offline"}`}>
-          <span className="status-dot" />
-          {status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
+        <div className="sidebar-top-row">
+          <button className="primary-button new-chat-button" onClick={startNewConversation} disabled={busy}>＋ 新建对话 <span>Ctrl+N</span></button>
+          <div className={`status-pill ${status ? "online" : "offline"}`}>
+            <span className="status-dot" />
+            {status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
+          </div>
         </div>
 
         <div className="session-tools">
@@ -823,14 +840,25 @@ export default function App() {
         </div>
         <div className="session-list">
           {conversations.length === 0 ? <p className="session-empty">还没有保存的会话</p> : conversations.map((conversation) => (
-            <div className={`session-item ${conversation.id === currentConversationId ? "selected" : ""}`} key={conversation.id}>
+            <div
+              className={`session-item ${conversation.id === currentConversationId ? "selected" : ""}`}
+              key={conversation.id}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const menuWidth = 150;
+                const menuHeight = 46;
+                setSessionContextMenu({
+                  conversation,
+                  x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
+                  y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
+                });
+              }}
+            >
               <button className="session-main" onClick={() => void selectConversation(conversation)} disabled={busy || loadingConversation}>
                 <strong>{conversation.title}</strong>
                 <small>{modelAliasFor(settings.modelAliases, conversation.model, conversation.modelAlias)} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
               </button>
-              <div className="session-actions">
-                <button title="删除会话" onClick={() => void removeConversation(conversation)} disabled={busy}>×</button>
-              </div>
             </div>
           ))}
         </div>
@@ -889,7 +917,7 @@ export default function App() {
                 {models.length === 0 ? <option value="">没有检测到模型</option> : null}
                 {models.map((model) => {
                   const name = modelName(model);
-                  return <option key={name} value={name}>{name}</option>;
+                  return <option key={name} value={name}>{modelAliasFor(settings.modelAliases, name, name === selectedModel ? currentModelAlias : undefined)}</option>;
                 })}
               </select>
               <span className="composer-selection-divider" aria-hidden="true">·</span>
@@ -905,6 +933,24 @@ export default function App() {
           </div>
         </form>
       </section>
+
+      {sessionContextMenu ? (
+        <div
+          className="session-context-menu"
+          role="menu"
+          style={{ left: sessionContextMenu.x, top: sessionContextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void removeConversation(sessionContextMenu.conversation)}
+            disabled={busy}
+          >
+            删除会话
+          </button>
+        </div>
+      ) : null}
 
       {showSettings ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettings(false)}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
