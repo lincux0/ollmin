@@ -15,9 +15,11 @@ import type {
 import {
   DEFAULT_CONTEXT_SIZE,
   DEFAULT_OUTPUT_TOKEN_LIMIT,
+  DEFAULT_REASONING_TOKEN_LIMIT,
   type ContextSize,
   type OutputTokenLimit,
   type PerformanceMode,
+  type ReasoningTokenLimit,
 } from "./lib/performance";
 
 export function getServiceStatus(): Promise<ServiceStatus> {
@@ -42,8 +44,16 @@ export function diagnoseChat(
   mode: PerformanceMode,
   contextSize: ContextSize = DEFAULT_CONTEXT_SIZE,
   outputTokenLimit: OutputTokenLimit = DEFAULT_OUTPUT_TOKEN_LIMIT,
+  reasoningTokenLimit: ReasoningTokenLimit = DEFAULT_REASONING_TOKEN_LIMIT,
 ): Promise<ChatResponse> {
-  return invoke<ChatResponse>("diagnose_chat", { model, messages, mode, contextSize, outputTokenLimit });
+  return invoke<ChatResponse>("diagnose_chat", {
+    model,
+    messages,
+    mode,
+    contextSize,
+    outputTokenLimit,
+    reasoningTokenLimit,
+  });
 }
 
 export function startChat(
@@ -53,8 +63,17 @@ export function startChat(
   requestId: string,
   contextSize: ContextSize = DEFAULT_CONTEXT_SIZE,
   outputTokenLimit: OutputTokenLimit = DEFAULT_OUTPUT_TOKEN_LIMIT,
+  reasoningTokenLimit: ReasoningTokenLimit = DEFAULT_REASONING_TOKEN_LIMIT,
 ): Promise<void> {
-  return invoke<void>("start_chat", { model, messages, mode, requestId, contextSize, outputTokenLimit });
+  return invoke<void>("start_chat", {
+    model,
+    messages,
+    mode,
+    requestId,
+    contextSize,
+    outputTokenLimit,
+    reasoningTokenLimit,
+  });
 }
 
 export function stopChat(requestId: string): Promise<boolean> {

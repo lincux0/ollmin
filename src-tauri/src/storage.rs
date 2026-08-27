@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const DEFAULT_CONTEXT_SIZE: u32 = 4096;
 const DEFAULT_OUTPUT_TOKEN_LIMIT: u32 = 2048;
+const DEFAULT_REASONING_TOKEN_LIMIT: u32 = 2048;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +66,7 @@ pub struct AppSettings {
     pub model_aliases: BTreeMap<String, String>,
     pub context_size: u32,
     pub output_token_limit: u32,
+    pub reasoning_token_limit: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,7 +140,8 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                    ('save_thinking', 'false'),
                    ('default_mode', 'fast'),
                    ('context_size', '4096'),
-                   ('output_token_limit', '2048');",
+                   ('output_token_limit', '2048'),
+                   ('reasoning_token_limit', '2048');",
             )
             .map_err(|error| format!("执行数据库迁移失败：{error}"))?;
         connection
@@ -265,7 +268,13 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                 "INSERT OR IGNORE INTO settings(key, value) VALUES ('output_token_limit', ?1)",
                 params![DEFAULT_OUTPUT_TOKEN_LIMIT.to_string()],
             )
-            .map_err(|error| format!("补充输出 token 上限设置失败：{error}"))?;
+            .map_err(|error| format!("补充输出消息 token 上限设置失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO settings(key, value) VALUES ('reasoning_token_limit', ?1)",
+                params![DEFAULT_REASONING_TOKEN_LIMIT.to_string()],
+            )
+            .map_err(|error| format!("补充推理输出 token 上限设置失败：{error}"))?;
         connection
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
@@ -546,6 +555,7 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
         model_aliases: BTreeMap::new(),
         context_size: DEFAULT_CONTEXT_SIZE,
         output_token_limit: DEFAULT_OUTPUT_TOKEN_LIMIT,
+        reasoning_token_limit: DEFAULT_REASONING_TOKEN_LIMIT,
     };
     let mut statement = connection
         .prepare("SELECT key, value FROM settings")
@@ -577,6 +587,12 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
                     _ => DEFAULT_OUTPUT_TOKEN_LIMIT,
                 };
             }
+            "reasoning_token_limit" => {
+                settings.reasoning_token_limit = match value.parse::<u32>() {
+                    Ok(value) if matches!(value, 0 | 2048 | 4096 | 8192) => value,
+                    _ => DEFAULT_REASONING_TOKEN_LIMIT,
+                };
+            }
             _ => {}
         }
     }
@@ -600,7 +616,10 @@ pub fn update_settings(
         return Err("不支持的上下文大小，可选 4K、8K 或 16K".to_string());
     }
     if !matches!(settings.output_token_limit, 1024 | 2048 | 4096) {
-        return Err("不支持的输出 token 上限，可选 1K、2K 或 4K".to_string());
+        return Err("不支持的输出消息 token 上限，可选 1K、2K 或 4K".to_string());
+    }
+    if !matches!(settings.reasoning_token_limit, 0 | 2048 | 4096 | 8192) {
+        return Err("不支持的推理输出 token 上限，可选 2K、4K、8K 或不限".to_string());
     }
     settings.default_model = settings.default_model.trim().to_string();
     settings.model_aliases = settings
@@ -627,6 +646,10 @@ pub fn update_settings(
         (
             "output_token_limit",
             settings.output_token_limit.to_string(),
+        ),
+        (
+            "reasoning_token_limit",
+            settings.reasoning_token_limit.to_string(),
         ),
         // Keep the legacy key empty so an older client cannot accidentally
         // display a stale single-model alias after this migration.
@@ -846,6 +869,7 @@ mod tests {
         assert!(settings.model_aliases.is_empty());
         assert_eq!(settings.context_size, 4096);
         assert_eq!(settings.output_token_limit, 2048);
+        assert_eq!(settings.reasoning_token_limit, 2048);
         let aliases: String = connection
             .query_row(
                 "SELECT value FROM settings WHERE key = 'model_aliases'",
@@ -956,6 +980,7 @@ mod tests {
                 )]),
                 context_size: 8192,
                 output_token_limit: 2048,
+                reasoning_token_limit: 2048,
             },
         )
         .expect("settings");
@@ -1159,6 +1184,7 @@ mod tests {
                 ]),
                 context_size: 16384,
                 output_token_limit: 2048,
+                reasoning_token_limit: 2048,
             },
         )
         .expect("save model aliases");
@@ -1191,6 +1217,7 @@ mod tests {
                 model_aliases: BTreeMap::new(),
                 context_size: 16384,
                 output_token_limit: 2048,
+                reasoning_token_limit: 2048,
             },
         )
         .expect("save context size");
@@ -1213,6 +1240,7 @@ mod tests {
                 model_aliases: BTreeMap::new(),
                 context_size: 12345,
                 output_token_limit: 2048,
+                reasoning_token_limit: 2048,
             },
         )
         .expect_err("reject invalid context size");
@@ -1232,16 +1260,24 @@ mod tests {
                 model_aliases: BTreeMap::new(),
                 context_size: 4096,
                 output_token_limit: 4096,
+                reasoning_token_limit: 8192,
             },
         )
         .expect("save output token limit");
 
         assert_eq!(settings.output_token_limit, 4096);
+        assert_eq!(settings.reasoning_token_limit, 8192);
         assert_eq!(
             get_settings(&connection)
                 .expect("load output token limit")
                 .output_token_limit,
             4096
+        );
+        assert_eq!(
+            get_settings(&connection)
+                .expect("load reasoning token limit")
+                .reasoning_token_limit,
+            8192
         );
 
         let invalid = update_settings(
@@ -1254,10 +1290,27 @@ mod tests {
                 model_aliases: BTreeMap::new(),
                 context_size: 4096,
                 output_token_limit: 12345,
+                reasoning_token_limit: 2048,
             },
         )
         .expect_err("reject invalid output token limit");
-        assert!(invalid.contains("输出 token 上限"));
+        assert!(invalid.contains("输出消息 token 上限"));
+
+        let invalid = update_settings(
+            &connection,
+            AppSettings {
+                theme: "system".to_string(),
+                save_thinking: false,
+                default_mode: "fast".to_string(),
+                default_model: String::new(),
+                model_aliases: BTreeMap::new(),
+                context_size: 4096,
+                output_token_limit: 2048,
+                reasoning_token_limit: 12345,
+            },
+        )
+        .expect_err("reject invalid reasoning token limit");
+        assert!(invalid.contains("推理输出 token 上限"));
     }
 
     #[test]

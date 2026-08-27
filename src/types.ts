@@ -121,6 +121,7 @@ export interface AppSettings {
   modelAliases: Record<string, string>;
   contextSize: import("./lib/performance").ContextSize;
   outputTokenLimit: import("./lib/performance").OutputTokenLimit;
+  reasoningTokenLimit: import("./lib/performance").ReasoningTokenLimit;
 }
 
 export interface ExportPayload {

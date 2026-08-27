@@ -4,11 +4,15 @@ export type PerformanceMode = "fast" | "balanced" | "reasoning";
 
 export type ContextSize = 4096 | 8192 | 16384;
 export type OutputTokenLimit = 1024 | 2048 | 4096;
+/** 0 means no additional cap on the reasoning trace. */
+export type ReasoningTokenLimit = 0 | 2048 | 4096 | 8192;
 
 export const DEFAULT_CONTEXT_SIZE: ContextSize = 4096;
 export const CONTEXT_SIZE_OPTIONS: readonly ContextSize[] = [4096, 8192, 16384];
 export const DEFAULT_OUTPUT_TOKEN_LIMIT: OutputTokenLimit = 2048;
 export const OUTPUT_TOKEN_LIMIT_OPTIONS: readonly OutputTokenLimit[] = [1024, 2048, 4096];
+export const DEFAULT_REASONING_TOKEN_LIMIT: ReasoningTokenLimit = 2048;
+export const REASONING_TOKEN_LIMIT_OPTIONS: readonly ReasoningTokenLimit[] = [2048, 4096, 8192, 0];
 
 export interface PerformanceProfile {
   mode: PerformanceMode;

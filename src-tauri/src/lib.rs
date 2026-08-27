@@ -16,7 +16,6 @@ const STREAM_BATCH_WINDOW_MS: u64 = 24;
 const STREAM_BATCH_MAX_BYTES: usize = 16 * 1024;
 const STREAM_BATCHING_ENV: &str = "OLLMIN_STREAM_BATCHING";
 const DEFAULT_CONTEXT_SIZE: u32 = 4096;
-const DEFAULT_OUTPUT_TOKEN_LIMIT: u32 = 2048;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ChatMessage {
@@ -30,7 +29,7 @@ struct ChatMessage {
 struct GenerationProfile {
     think: bool,
     num_ctx: u32,
-    num_predict: u32,
+    num_predict: i32,
     max_history_tokens: usize,
 }
 
@@ -251,15 +250,44 @@ fn override_context_size(
     Ok(())
 }
 
+// Ollama exposes one `num_predict` budget for both thinking and final content.
+// We therefore reserve the selected message budget first, then add a finite
+// reasoning budget. `-1` asks Ollama not to impose a generation cap when the
+// user selects “不限”; the stream still keeps thinking and content separate.
 fn override_output_token_limit(
     profile: &mut GenerationProfile,
     output_token_limit: Option<u32>,
 ) -> Result<(), String> {
-    let output_token_limit = output_token_limit.unwrap_or(DEFAULT_OUTPUT_TOKEN_LIMIT);
+    let Some(output_token_limit) = output_token_limit else {
+        return Ok(());
+    };
     if !matches!(output_token_limit, 1024 | 2048 | 4096) {
-        return Err("不支持的输出 token 上限，可选 1K、2K 或 4K".to_string());
+        return Err("不支持的输出消息 token 上限，可选 1K、2K 或 4K".to_string());
     }
-    profile.num_predict = output_token_limit;
+    profile.num_predict = output_token_limit as i32;
+    Ok(())
+}
+
+fn override_reasoning_token_limit(
+    profile: &mut GenerationProfile,
+    reasoning_token_limit: Option<u32>,
+) -> Result<(), String> {
+    let Some(reasoning_token_limit) = reasoning_token_limit else {
+        return Ok(());
+    };
+    if !matches!(reasoning_token_limit, 0 | 2048 | 4096 | 8192) {
+        return Err("不支持的推理输出 token 上限，可选 2K、4K、8K 或不限".to_string());
+    }
+    if profile.think {
+        profile.num_predict = if reasoning_token_limit == 0 {
+            -1
+        } else {
+            profile
+                .num_predict
+                .checked_add(reasoning_token_limit as i32)
+                .ok_or_else(|| "推理与输出 token 上限之和过大".to_string())?
+        };
+    }
     Ok(())
 }
 
@@ -868,6 +896,7 @@ async fn diagnose_chat(
     mode: String,
     context_size: Option<u32>,
     output_token_limit: Option<u32>,
+    reasoning_token_limit: Option<u32>,
 ) -> Result<Value, String> {
     if model.trim().is_empty() {
         return Err("模型名称不能为空".to_string());
@@ -875,6 +904,7 @@ async fn diagnose_chat(
     let (messages, mut profile) = prepare_messages(messages, &mode)?;
     override_context_size(&mut profile, context_size)?;
     override_output_token_limit(&mut profile, output_token_limit)?;
+    override_reasoning_token_limit(&mut profile, reasoning_token_limit)?;
 
     request_json(
         &state.client,
@@ -906,6 +936,7 @@ async fn start_chat(
     mode: String,
     context_size: Option<u32>,
     output_token_limit: Option<u32>,
+    reasoning_token_limit: Option<u32>,
 ) -> Result<(), String> {
     if request_id.trim().is_empty() {
         return Err("请求 ID 不能为空".to_string());
@@ -916,6 +947,7 @@ async fn start_chat(
     let (messages, mut profile) = prepare_messages(messages, &mode)?;
     override_context_size(&mut profile, context_size)?;
     override_output_token_limit(&mut profile, output_token_limit)?;
+    override_reasoning_token_limit(&mut profile, reasoning_token_limit)?;
     let cancellation = CancellationToken::new();
 
     {
@@ -1144,9 +1176,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel_active, override_context_size, override_output_token_limit, parse_stream_line,
-        profile_for_mode, queue_stream_chunk, trim_fast_history, ActiveChat, ChatMessage,
-        OllamaStreamChunk, PendingBatch, STREAM_BATCH_MAX_BYTES,
+        cancel_active, override_context_size, override_output_token_limit,
+        override_reasoning_token_limit, parse_stream_line, profile_for_mode, queue_stream_chunk,
+        trim_fast_history, ActiveChat, ChatMessage, OllamaStreamChunk, PendingBatch,
+        STREAM_BATCH_MAX_BYTES,
     };
     use bytes::BytesMut;
     use std::sync::{Arc, Mutex};
@@ -1187,10 +1220,27 @@ mod tests {
 
         override_output_token_limit(&mut profile, Some(1024)).expect("override output limit");
         assert_eq!(profile.num_predict, 1024);
-
-        override_output_token_limit(&mut profile, Some(4096)).expect("override output limit");
-        assert_eq!(profile.num_predict, 4096);
         assert!(override_output_token_limit(&mut profile, Some(12345)).is_err());
+    }
+
+    #[test]
+    fn reasoning_and_message_limits_compose_generation_budget() {
+        let mut profile = profile_for_mode("reasoning").expect("reasoning profile");
+        override_output_token_limit(&mut profile, Some(4096)).expect("override output limit");
+        override_reasoning_token_limit(&mut profile, Some(8192)).expect("override reasoning limit");
+        assert_eq!(profile.num_predict, 12288);
+
+        override_reasoning_token_limit(&mut profile, Some(0)).expect("unlimited reasoning");
+        assert_eq!(profile.num_predict, -1);
+        assert!(override_reasoning_token_limit(&mut profile, Some(1024)).is_err());
+    }
+
+    #[test]
+    fn fast_mode_keeps_reasoning_limit_disabled() {
+        let mut profile = profile_for_mode("fast").expect("fast profile");
+        override_output_token_limit(&mut profile, Some(4096)).expect("override output limit");
+        override_reasoning_token_limit(&mut profile, Some(8192)).expect("override reasoning limit");
+        assert_eq!(profile.num_predict, 4096);
     }
 
     #[test]

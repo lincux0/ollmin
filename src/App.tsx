@@ -27,12 +27,15 @@ import {
   CONTEXT_SIZE_OPTIONS,
   DEFAULT_CONTEXT_SIZE,
   DEFAULT_OUTPUT_TOKEN_LIMIT,
+  DEFAULT_REASONING_TOKEN_LIMIT,
   OUTPUT_TOKEN_LIMIT_OPTIONS,
   PERFORMANCE_PROFILES,
   profileForMode,
+  REASONING_TOKEN_LIMIT_OPTIONS,
   type ContextSize,
   type OutputTokenLimit,
   type PerformanceMode,
+  type ReasoningTokenLimit,
 } from "./lib/performance";
 import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
 import type {
@@ -97,6 +100,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   modelAliases: {},
   contextSize: DEFAULT_CONTEXT_SIZE,
   outputTokenLimit: DEFAULT_OUTPUT_TOKEN_LIMIT,
+  reasoningTokenLimit: DEFAULT_REASONING_TOKEN_LIMIT,
 };
 
 function modelName(model: OllamaModel): string {
@@ -675,7 +679,15 @@ export default function App() {
         mode,
         elapsedFromT0Ms: requestStartedAt.current - requestUserStartedAt.current,
       });
-      await startChat(selectedModel, prepared, mode, requestId, settings.contextSize, settings.outputTokenLimit);
+      await startChat(
+        selectedModel,
+        prepared,
+        mode,
+        requestId,
+        settings.contextSize,
+        settings.outputTokenLimit,
+        settings.reasoningTokenLimit,
+      );
       recordDiagnostic(requestId, "T2-invoke-return", {
         invokeMs: performance.now() - requestStartedAt.current,
         elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
@@ -1011,9 +1023,9 @@ export default function App() {
               </select>
             </div>
           </div>
-          <div className="settings-grid settings-grid-single">
+          <div className="settings-grid">
             <div className="settings-field">
-              <label htmlFor="output-token-limit">输出 token 上限</label>
+              <label htmlFor="output-token-limit">输出消息 token 上限</label>
               <select
                 id="output-token-limit"
                 value={settingsDraft.outputTokenLimit}
@@ -1025,7 +1037,21 @@ export default function App() {
                 {OUTPUT_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit / 1024}K</option>)}
               </select>
             </div>
+            <div className="settings-field">
+              <label htmlFor="reasoning-token-limit">推理输出 token 上限</label>
+              <select
+                id="reasoning-token-limit"
+                value={settingsDraft.reasoningTokenLimit}
+                onChange={(event) => setSettingsDraft((current) => ({
+                  ...current,
+                  reasoningTokenLimit: Number(event.target.value) as ReasoningTokenLimit,
+                }))}
+              >
+                {REASONING_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit === 0 ? "不限" : `${limit / 1024}K`}</option>)}
+              </select>
+            </div>
           </div>
+          <p className="settings-note">推理上限仅在开启思考的模式中生效；快速模式关闭思考，“不限”表示不额外限制推理输出。Ollama 会将推理与正文计入同一生成预算，Ollmin 按两项上限合并分配。</p>
           <button
             type="button"
             className="settings-disclosure"
