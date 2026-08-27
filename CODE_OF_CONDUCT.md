@@ -1,23 +1,27 @@
-# 行为准则
+<p align="right">
+  <a href="CODE_OF_CONDUCT.md">English</a> | <a href="CODE_OF_CONDUCT.zh-CN.md">简体中文</a>
+</p>
 
-## 我们的承诺
+# Code of Conduct
 
-为了营造开放、友善和可参与的项目环境，我们承诺让每一位参与者都能在不受骚扰的前提下贡献想法、代码、文档和反馈，无论其经验、身份、背景或观点如何。
+## Our pledge
 
-## 可接受的行为
+We are committed to making participation in Ollmin welcoming and accessible to everyone who contributes ideas, code, documentation, or feedback, regardless of experience, identity, background, or viewpoint. We expect every participant to interact without harassment.
 
-- 使用尊重、清晰和建设性的语言；
-- 针对问题和代码提出具体反馈，不攻击个人；
-- 认真说明不同意见，接受基于证据的修正；
-- 保护他人的隐私，不公开会话、密钥、绝对路径或其他个人信息。
+## Acceptable behavior
 
-## 不可接受的行为
+- Use respectful, clear, and constructive language;
+- Focus feedback on the problem or code rather than attacking a person;
+- Explain disagreements carefully and accept evidence-based corrections;
+- Protect other people's privacy and do not publish conversations, secrets, absolute paths, or other personal information.
 
-- 骚扰、歧视、威胁、人身攻击或恶意跟踪；
-- 发布他人的私人信息，或在未经同意的情况下联系他人；
-- 恶意提交、破坏 CI、滥用 Issue/PR 或传播未修复的安全漏洞；
-- 其他明显破坏社区安全和协作秩序的行为。
+## Unacceptable behavior
 
-## 执行
+- Harassment, discrimination, threats, personal attacks, or malicious stalking;
+- Publishing another person's private information or contacting them without consent;
+- Malicious submissions, CI disruption, issue or pull request abuse, or distribution of an unresolved security vulnerability;
+- Other conduct that clearly damages a safe and collaborative project environment.
 
-维护者可以编辑、隐藏或关闭违反本准则的评论、Issue 和 Pull Request，并在必要时限制参与权限。请通过相关 GitHub 内容的举报入口联系维护者；涉及安全漏洞时请遵循 [安全政策](SECURITY.md) 的私密报告流程。
+## Enforcement
+
+Maintainers may edit, hide, or close comments, issues, and pull requests that violate this code, and may restrict participation when necessary. Use the relevant GitHub reporting mechanism to contact the maintainers. For security vulnerabilities, follow the private reporting process in the [Security Policy](SECURITY.md).

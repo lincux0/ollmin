@@ -1,22 +1,26 @@
-# 安全政策
+<p align="right">
+  <a href="SECURITY.md">English</a> | <a href="SECURITY.zh-CN.md">简体中文</a>
+</p>
 
-## 支持范围
+# Security Policy
 
-当前只支持仓库 `main` 分支和最新的 `0.2.x` 版本。Ollmin 默认只向本机 Ollama `127.0.0.1:11434` 发起请求，不提供账号、云端 API、遥测或远程主机连接配置。
+## Supported versions
 
-## 报告漏洞
+We currently support the `main` branch and the latest `1.0.x` release. Ollmin sends requests only to the local Ollama endpoint `127.0.0.1:11434` by default and does not provide accounts, cloud APIs, telemetry, or remote-host configuration.
 
-请不要在公开 Issue 中发布尚未修复的漏洞、利用代码、会话内容或敏感文件。优先使用 GitHub 仓库 Security 页中的 **Report a vulnerability**（如果仓库启用了私密漏洞报告）；若该入口不可用，请先联系仓库维护者获取私密沟通方式。
+## Reporting a vulnerability
 
-报告中请尽量包含：
+Please do not publish an unresolved vulnerability, exploit code, conversation content, or sensitive file in a public issue. Prefer **Report a vulnerability** on the repository's Security page when private vulnerability reporting is enabled. If that entry is unavailable, contact the maintainer through a private channel before sharing details.
 
-- 受影响的版本、操作系统和 Ollama 版本；
-- 可重复的最小步骤或 PoC（请去除真实提示词、路径和密钥）；
-- 预期行为、实际行为和潜在影响；
-- 你认为合适的修复建议。
+Please include, where possible:
 
-维护者会先确认报告、评估影响范围，再决定修复版本和公开时间。请给维护者合理的修复窗口，不要在修复前向第三方扩散细节。
+- The affected version, operating system, and Ollama version;
+- Minimal reproducible steps or a PoC with real prompts, paths, and secrets removed;
+- Expected behavior, actual behavior, and potential impact;
+- Any remediation suggestion you consider useful.
 
-## 隐私边界
+The maintainer will acknowledge the report, assess its impact, and decide on a fix and disclosure timeline. Please allow a reasonable remediation window and do not distribute details to third parties before the issue is addressed.
 
-会话和设置默认保存在本机 SQLite。提交问题或日志前请手工检查并删除提示词、模型输出、用户名、绝对路径和任何密钥；项目不需要这些信息来复现大多数问题。
+## Privacy boundary
+
+Conversations and settings are stored in a local SQLite database by default. Before submitting an issue or log, manually remove prompts, model output, usernames, absolute paths, and secrets. The project normally does not need those details to reproduce a problem.
