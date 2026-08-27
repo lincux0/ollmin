@@ -3,6 +3,7 @@ name = "ollmin"
 version = "0.2.0"
 description = "A lightweight local Ollama diagnostic client"
 authors = ["Ollmin contributors"]
+license = "MIT"
 edition = "2021"
 
 [lib]

@@ -72,7 +72,7 @@ npm install
 npm run tauri -- dev
 ```
 
-开发窗口启动后，在左侧选择模型，选择性能模式，输入消息并发送。设置中的默认模型和模型别名会在下一个新会话中生效。
+开发窗口启动后，在左侧选择模型，选择性能模式，输入消息并发送。设置中的默认模型用于新会话；模型别名保存后会立即应用到当前界面和后续显示。
 
 仅运行 `npm run dev` 或 `npm run preview` 可以查看前端样式，但浏览器没有 Tauri `invoke` 运行时，不能代替桌面客户端连接 Ollama。
 
@@ -126,6 +126,12 @@ npm run tauri -- build
 
 当前 `tauri.conf.json` 未启用 installer bundle，因此仓库现阶段主要产出可执行文件，而不是 MSI/NSIS 安装包。
 
+## 发布方式
+
+每次发布前先确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本一致，然后执行测试、前端构建和 Rust 检查。通过 GitHub Actions 的 `main` 分支检查后，维护者可以创建版本标签（例如 `v0.2.0`），并在 GitHub Release 中附上对应的 Release notes 和 Windows Release 可执行文件。
+
+当前 installer bundle 保持关闭，生成 MSI/NSIS 安装包属于单独的发行步骤，不会随普通 Debug/Release 验证自动产生；需要安装包时再显式启用并验证对应的 Tauri bundle 配置。
+
 ## 本地数据与隐私
 
 - SQLite 文件：`%APPDATA%\com.ollmin.desktop\ollmin.sqlite3`；
@@ -155,12 +161,19 @@ Invoke-RestMethod http://127.0.0.1:11434/api/version
 
 平衡和推理模式允许思考，推理模式还使用更大的上下文和输出预算。请结合界面中的加载、提示词和生成指标判断瓶颈，不要只用一次回答的总耗时下结论。
 
+## 贡献与安全
+
+- [贡献指南](CONTRIBUTING.md)
+- [安全政策](SECURITY.md)
+- [行为准则](CODE_OF_CONDUCT.md)
+- [更新日志](CHANGELOG.md)
+
 ## 当前状态与边界
 
-Ollmin 当前是 `0.2.0` 开发版，已完成可用聊天闭环、本地会话、性能档位、前端链路优化和 Debug/Release 构建验证。完整的桌面 Playwright E2E、安装包签名、自动更新和跨设备能力尚未纳入当前版本。
+Ollmin 当前版本为 `0.2.0`，已完成可用聊天闭环、本地会话、性能档位、前端链路优化和 Debug/Release 构建验证。完整的桌面 Playwright E2E、安装包签名、自动更新和跨设备能力尚未纳入当前版本。
 
 欢迎围绕本机 Ollama、低配设备性能、流式体验和本地隐私边界提交问题或改进建议。新增功能应先评估 token、内存、权限和请求次数成本。
 
 ## 许可证
 
-当前仓库尚未包含 `LICENSE` 文件，项目授权方式尚未正式声明；在分发或二次使用前请先确认维护者的授权说明。
+本项目采用 MIT License，详见 [LICENSE](LICENSE)。
