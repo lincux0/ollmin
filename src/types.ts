@@ -119,6 +119,7 @@ export interface AppSettings {
   defaultMode: import("./lib/performance").PerformanceMode;
   defaultModel: string;
   modelAliases: Record<string, string>;
+  contextSize: import("./lib/performance").ContextSize;
 }
 
 export interface ExportPayload {

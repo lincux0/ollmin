@@ -170,7 +170,13 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 .settings-connection { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -5px 0 15px; padding: 10px 11px; border: 1px solid #e5dcd3; border-radius: 10px; background: #f8f2ed; color: #88796d; font-size: 10px; }
 .settings-connection .ghost-button { flex: 0 0 auto; padding: 6px 9px; }
 .settings-modal label:not(.check-row) { margin-top: 14px; }
-.settings-modal select { margin-bottom: 3px; }
+.settings-modal select { height: 35px; margin-bottom: 0; }
+.settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.settings-grid + .settings-grid { margin-top: 12px; }
+.settings-field { min-width: 0; }
+.settings-field label { margin-top: 0 !important; }
+.settings-disclosure { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 35px; margin-top: 16px; padding: 0 10px; border: 1px solid #d8d0c6; border-radius: 9px; background: transparent; color: #a45e47; font-size: 11px; font-weight: 800; text-align: left; }
+.settings-disclosure:hover { background: #f1e7de; }
 .model-alias-list { display: grid; gap: 7px; margin-top: 8px; }
 .model-alias-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 9px; padding: 8px 9px; border: 1px solid #e5dcd3; border-radius: 9px; background: #f8f2ed; }
 .model-alias-name { overflow: hidden; color: #655d55; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -232,6 +238,8 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 [data-theme="dark"] .send-button:hover:not(:disabled) { background: #d97757; color: #fffaf4; }
 [data-theme="dark"] .header-button, [data-theme="dark"] .ghost-button { border-color: #4a433a; color: #e1a48f; }
 [data-theme="dark"] .header-button:hover:not(:disabled), [data-theme="dark"] .ghost-button:hover:not(:disabled) { background: #39332d; }
+[data-theme="dark"] .settings-disclosure { border-color: #4a433a; color: #e1a48f; }
+[data-theme="dark"] .settings-disclosure:hover { background: #39332d; }
 [data-theme="dark"] .modal-backdrop { background: rgba(12, 10, 8, 0.58); }
 [data-theme="dark"] .settings-modal { border-color: #4a433a; background: #2a2723; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38); }
 [data-theme="dark"] .settings-connection { border-color: #4a433a; background: #302b26; color: #aaa096; }

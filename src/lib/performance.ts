@@ -2,6 +2,11 @@ import type { ChatMessage } from "../types";
 
 export type PerformanceMode = "fast" | "balanced" | "reasoning";
 
+export type ContextSize = 4096 | 8192 | 16384;
+
+export const DEFAULT_CONTEXT_SIZE: ContextSize = 4096;
+export const CONTEXT_SIZE_OPTIONS: readonly ContextSize[] = [4096, 8192, 16384];
+
 export interface PerformanceProfile {
   mode: PerformanceMode;
   label: string;

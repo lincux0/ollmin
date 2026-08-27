@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
+const DEFAULT_CONTEXT_SIZE: u32 = 4096;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +62,7 @@ pub struct AppSettings {
     pub default_mode: String,
     pub default_model: String,
     pub model_aliases: BTreeMap<String, String>,
+    pub context_size: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,7 +134,8 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                  INSERT OR IGNORE INTO settings(key, value) VALUES
                    ('theme', 'system'),
                    ('save_thinking', 'false'),
-                   ('default_mode', 'fast');",
+                   ('default_mode', 'fast'),
+                   ('context_size', '4096');",
             )
             .map_err(|error| format!("执行数据库迁移失败：{error}"))?;
         connection
@@ -215,7 +218,7 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
 
-    if applied.unwrap_or(0) < SCHEMA_VERSION {
+    if applied.unwrap_or(0) < 4 {
         let legacy_ids: Vec<String> = {
             let mut statement = connection
                 .prepare(
@@ -243,6 +246,21 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
             .execute(
                 "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
                 params![4, timestamp()],
+            )
+            .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
+    }
+
+    if applied.unwrap_or(0) < SCHEMA_VERSION {
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO settings(key, value) VALUES ('context_size', ?1)",
+                params![DEFAULT_CONTEXT_SIZE.to_string()],
+            )
+            .map_err(|error| format!("补充上下文大小设置失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+                params![5, timestamp()],
             )
             .map_err(|error| format!("记录数据库迁移版本失败：{error}"))?;
     }
@@ -517,6 +535,7 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
         default_mode: "fast".to_string(),
         default_model: String::new(),
         model_aliases: BTreeMap::new(),
+        context_size: DEFAULT_CONTEXT_SIZE,
     };
     let mut statement = connection
         .prepare("SELECT key, value FROM settings")
@@ -536,6 +555,12 @@ pub fn get_settings(connection: &Connection) -> Result<AppSettings, String> {
             "model_aliases" => {
                 settings.model_aliases = serde_json::from_str(&value).unwrap_or_default();
             }
+            "context_size" => {
+                settings.context_size = match value.parse::<u32>() {
+                    Ok(value) if matches!(value, 4096 | 8192 | 16384) => value,
+                    _ => DEFAULT_CONTEXT_SIZE,
+                };
+            }
             _ => {}
         }
     }
@@ -554,6 +579,9 @@ pub fn update_settings(
         "fast" | "balanced" | "reasoning"
     ) {
         return Err("不支持的默认性能模式".to_string());
+    }
+    if !matches!(settings.context_size, 4096 | 8192 | 16384) {
+        return Err("不支持的上下文大小，可选 4K、8K 或 16K".to_string());
     }
     settings.default_model = settings.default_model.trim().to_string();
     settings.model_aliases = settings
@@ -576,6 +604,7 @@ pub fn update_settings(
         ("default_mode", settings.default_mode.clone()),
         ("default_model", settings.default_model.clone()),
         ("model_aliases", model_aliases),
+        ("context_size", settings.context_size.to_string()),
         // Keep the legacy key empty so an older client cannot accidentally
         // display a stale single-model alias after this migration.
         ("model_alias", String::new()),
@@ -792,6 +821,7 @@ mod tests {
         assert_eq!(settings.default_mode, "fast");
         assert!(settings.default_model.is_empty());
         assert!(settings.model_aliases.is_empty());
+        assert_eq!(settings.context_size, 4096);
         let aliases: String = connection
             .query_row(
                 "SELECT value FROM settings WHERE key = 'model_aliases'",
@@ -894,6 +924,7 @@ mod tests {
                     String::from("qwen3:4b"),
                     String::from("本地助手"),
                 )]),
+                context_size: 8192,
             },
         )
         .expect("settings");
@@ -1095,6 +1126,7 @@ mod tests {
                     ("llama3".to_string(), "".to_string()),
                     (" ".to_string(), "ignored".to_string()),
                 ]),
+                context_size: 16384,
             },
         )
         .expect("save model aliases");
@@ -1112,6 +1144,45 @@ mod tests {
 
         let loaded = get_settings(&connection).expect("load model aliases");
         assert_eq!(loaded.model_aliases, settings.model_aliases);
+    }
+
+    #[test]
+    fn context_size_is_persisted_and_validated() {
+        let connection = database();
+        let settings = update_settings(
+            &connection,
+            AppSettings {
+                theme: "system".to_string(),
+                save_thinking: false,
+                default_mode: "fast".to_string(),
+                default_model: String::new(),
+                model_aliases: BTreeMap::new(),
+                context_size: 16384,
+            },
+        )
+        .expect("save context size");
+
+        assert_eq!(settings.context_size, 16384);
+        assert_eq!(
+            get_settings(&connection)
+                .expect("load context size")
+                .context_size,
+            16384
+        );
+
+        let invalid = update_settings(
+            &connection,
+            AppSettings {
+                theme: "system".to_string(),
+                save_thinking: false,
+                default_mode: "fast".to_string(),
+                default_model: String::new(),
+                model_aliases: BTreeMap::new(),
+                context_size: 12345,
+            },
+        )
+        .expect_err("reject invalid context size");
+        assert!(invalid.contains("上下文大小"));
     }
 
     #[test]

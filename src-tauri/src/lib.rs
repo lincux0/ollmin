@@ -15,6 +15,7 @@ const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 const STREAM_BATCH_WINDOW_MS: u64 = 24;
 const STREAM_BATCH_MAX_BYTES: usize = 16 * 1024;
 const STREAM_BATCHING_ENV: &str = "OLLMIN_STREAM_BATCHING";
+const DEFAULT_CONTEXT_SIZE: u32 = 4096;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ChatMessage {
@@ -235,6 +236,18 @@ fn profile_for_mode(mode: &str) -> Result<GenerationProfile, String> {
         }),
         _ => Err(format!("不支持的性能模式：{mode}")),
     }
+}
+
+fn override_context_size(
+    profile: &mut GenerationProfile,
+    context_size: Option<u32>,
+) -> Result<(), String> {
+    let context_size = context_size.unwrap_or(DEFAULT_CONTEXT_SIZE);
+    if !matches!(context_size, 4096 | 8192 | 16384) {
+        return Err("不支持的上下文大小，可选 4K、8K 或 16K".to_string());
+    }
+    profile.num_ctx = context_size;
+    Ok(())
 }
 
 fn estimate_tokens(message: &ChatMessage) -> usize {
@@ -840,11 +853,13 @@ async fn diagnose_chat(
     model: String,
     messages: Vec<ChatMessage>,
     mode: String,
+    context_size: Option<u32>,
 ) -> Result<Value, String> {
     if model.trim().is_empty() {
         return Err("模型名称不能为空".to_string());
     }
-    let (messages, profile) = prepare_messages(messages, &mode)?;
+    let (messages, mut profile) = prepare_messages(messages, &mode)?;
+    override_context_size(&mut profile, context_size)?;
 
     request_json(
         &state.client,
@@ -874,6 +889,7 @@ async fn start_chat(
     model: String,
     messages: Vec<ChatMessage>,
     mode: String,
+    context_size: Option<u32>,
 ) -> Result<(), String> {
     if request_id.trim().is_empty() {
         return Err("请求 ID 不能为空".to_string());
@@ -881,7 +897,8 @@ async fn start_chat(
     if model.trim().is_empty() {
         return Err("模型名称不能为空".to_string());
     }
-    let (messages, profile) = prepare_messages(messages, &mode)?;
+    let (messages, mut profile) = prepare_messages(messages, &mode)?;
+    override_context_size(&mut profile, context_size)?;
     let cancellation = CancellationToken::new();
 
     {
@@ -1110,8 +1127,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel_active, parse_stream_line, profile_for_mode, queue_stream_chunk, trim_fast_history,
-        ActiveChat, ChatMessage, OllamaStreamChunk, PendingBatch, STREAM_BATCH_MAX_BYTES,
+        cancel_active, override_context_size, parse_stream_line, profile_for_mode,
+        queue_stream_chunk, trim_fast_history, ActiveChat, ChatMessage, OllamaStreamChunk,
+        PendingBatch, STREAM_BATCH_MAX_BYTES,
     };
     use bytes::BytesMut;
     use std::sync::{Arc, Mutex};
@@ -1132,6 +1150,17 @@ mod tests {
         assert_eq!(profile.num_ctx, 4096);
         assert_eq!(profile.num_predict, 2048);
         assert_eq!(profile.max_history_tokens, 2048);
+    }
+
+    #[test]
+    fn context_size_override_replaces_mode_default() {
+        let mut profile = profile_for_mode("reasoning").expect("reasoning profile");
+        override_context_size(&mut profile, Some(4096)).expect("override context size");
+        assert_eq!(profile.num_ctx, 4096);
+
+        override_context_size(&mut profile, Some(16384)).expect("override context size");
+        assert_eq!(profile.num_ctx, 16384);
+        assert!(override_context_size(&mut profile, Some(12345)).is_err());
     }
 
     #[test]

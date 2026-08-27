@@ -23,7 +23,14 @@ import MessageItem from "./components/MessageItem";
 import { diagnosticsEnabled, installLongTaskObserver, recordDiagnostic, scheduleDiagnosticPaint } from "./lib/diagnostics";
 import { trimHistoryForFastMode } from "./lib/history";
 import { deriveChatMetrics, formatMetric } from "./lib/metrics";
-import { PERFORMANCE_PROFILES, profileForMode, type PerformanceMode } from "./lib/performance";
+import {
+  CONTEXT_SIZE_OPTIONS,
+  DEFAULT_CONTEXT_SIZE,
+  PERFORMANCE_PROFILES,
+  profileForMode,
+  type ContextSize,
+  type PerformanceMode,
+} from "./lib/performance";
 import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
 import type {
   AppSettings,
@@ -85,6 +92,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultMode: "fast",
   defaultModel: "",
   modelAliases: {},
+  contextSize: DEFAULT_CONTEXT_SIZE,
 };
 
 function modelName(model: OllamaModel): string {
@@ -188,6 +196,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [modelAliasesExpanded, setModelAliasesExpanded] = useState(false);
   const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
@@ -662,7 +671,7 @@ export default function App() {
         mode,
         elapsedFromT0Ms: requestStartedAt.current - requestUserStartedAt.current,
       });
-      await startChat(selectedModel, prepared, mode, requestId);
+      await startChat(selectedModel, prepared, mode, requestId, settings.contextSize);
       recordDiagnostic(requestId, "T2-invoke-return", {
         invokeMs: performance.now() - requestStartedAt.current,
         elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
@@ -867,7 +876,7 @@ export default function App() {
           <button className="ghost-button warm-button" onClick={() => void runWarmup()} disabled={!selectedModel || warming || busy}>
             {warming ? "预热中…" : "常驻"}
           </button>
-          <button className="ghost-button" onClick={() => { setSettingsDraft(settings); setShowSettings(true); }} disabled={busy}>设置</button>
+          <button className="ghost-button" onClick={() => { setSettingsDraft(settings); setModelAliasesExpanded(false); setShowSettings(true); }} disabled={busy}>设置</button>
         </div>
       </aside>
 
@@ -878,7 +887,7 @@ export default function App() {
             <h2>{currentModelAlias || selectedModel || "选择一个本地模型"}</h2>
           </div>
           <div className="conversation-header-actions">
-            <span className="context-size" title={`当前性能模式的上下文窗口：${profile.numCtx.toLocaleString()} token`}>上下文 {profile.numCtx.toLocaleString()} token</span>
+            <span className="context-size" title={`当前会话使用的上下文窗口：${settings.contextSize.toLocaleString()} token`}>上下文 {settings.contextSize.toLocaleString()} token</span>
             {currentConversationId ? <>
               <button className="header-button" onClick={renameCurrentConversation} disabled={busy}>重命名</button>
             </> : null}
@@ -959,46 +968,77 @@ export default function App() {
             <button className="ghost-button" onClick={() => void refreshConnection()} disabled={busy || warming}>刷新连接</button>
             <span>{status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}</span>
           </div>
-          <label htmlFor="theme">主题</label>
-          <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
-            <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
-          </select>
-          <label htmlFor="default-mode">默认性能模式</label>
-          <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
-            {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-          </select>
-          <label htmlFor="settings-model">新会话模型</label>
-          <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
-            <option value="">自动选择第一个可用模型</option>
-            {models.map((model) => {
-              const name = modelName(model);
-              return <option key={name} value={name}>{name}</option>;
-            })}
-          </select>
-          <label>已有模型别名</label>
-          <div className="model-alias-list">
-            {models.length === 0 ? <p className="settings-note">暂无可用模型，请先刷新连接。</p> : models.map((model) => {
-              const name = modelName(model);
-              const alias = Object.prototype.hasOwnProperty.call(settingsDraft.modelAliases, name)
-                ? settingsDraft.modelAliases[name]
-                : "";
-              return (
-                <div className="model-alias-row" key={name}>
-                  <span className="model-alias-name" title={name}>{name}</span>
-                  <input
-                    aria-label={`${name} 的别名`}
-                    value={alias}
-                    maxLength={80}
-                    placeholder="使用原名"
-                    onChange={(event) => setSettingsDraft((current) => ({
-                      ...current,
-                      modelAliases: { ...current.modelAliases, [name]: event.target.value },
-                    }))}
-                  />
-                </div>
-              );
-            })}
+          <div className="settings-grid">
+            <div className="settings-field">
+              <label htmlFor="theme">主题</label>
+              <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
+                <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+              </select>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="default-mode">默认性能模式</label>
+              <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
+                {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
+              </select>
+            </div>
           </div>
+          <div className="settings-grid">
+            <div className="settings-field">
+              <label htmlFor="settings-model">新会话模型</label>
+              <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
+                <option value="">自动选择第一个可用模型</option>
+                {models.map((model) => {
+                  const name = modelName(model);
+                  return <option key={name} value={name}>{name}</option>;
+                })}
+              </select>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="context-size">上下文大小</label>
+              <select
+                id="context-size"
+                value={settingsDraft.contextSize}
+                onChange={(event) => setSettingsDraft((current) => ({
+                  ...current,
+                  contextSize: Number(event.target.value) as ContextSize,
+                }))}
+              >
+                {CONTEXT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size / 1024}K</option>)}
+              </select>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="settings-disclosure"
+            aria-expanded={modelAliasesExpanded}
+            onClick={() => setModelAliasesExpanded((expanded) => !expanded)}
+          >
+            <span>模型别名</span>
+            <span aria-hidden="true">{modelAliasesExpanded ? "⌃" : "⌄"}</span>
+          </button>
+          {modelAliasesExpanded ? <div className="model-alias-list">
+            {models.length === 0 ? <p className="settings-note">暂无可用模型，请先刷新连接。</p> : models.map((model) => {
+                const name = modelName(model);
+                const alias = Object.prototype.hasOwnProperty.call(settingsDraft.modelAliases, name)
+                  ? settingsDraft.modelAliases[name]
+                  : "";
+                return (
+                  <div className="model-alias-row" key={name}>
+                    <span className="model-alias-name" title={name}>{name}</span>
+                    <input
+                      aria-label={`${name} 的别名`}
+                      value={alias}
+                      maxLength={80}
+                      placeholder="使用原名"
+                      onChange={(event) => setSettingsDraft((current) => ({
+                        ...current,
+                        modelAliases: { ...current.modelAliases, [name]: event.target.value },
+                      }))}
+                    />
+                  </div>
+                );
+              })}
+          </div> : null}
           <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
           <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
           <div className="settings-export">
