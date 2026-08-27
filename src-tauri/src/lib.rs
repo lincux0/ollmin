@@ -16,6 +16,7 @@ const STREAM_BATCH_WINDOW_MS: u64 = 24;
 const STREAM_BATCH_MAX_BYTES: usize = 16 * 1024;
 const STREAM_BATCHING_ENV: &str = "OLLMIN_STREAM_BATCHING";
 const DEFAULT_CONTEXT_SIZE: u32 = 4096;
+const DEFAULT_OUTPUT_TOKEN_LIMIT: u32 = 2048;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct ChatMessage {
@@ -247,6 +248,18 @@ fn override_context_size(
         return Err("不支持的上下文大小，可选 4K、8K 或 16K".to_string());
     }
     profile.num_ctx = context_size;
+    Ok(())
+}
+
+fn override_output_token_limit(
+    profile: &mut GenerationProfile,
+    output_token_limit: Option<u32>,
+) -> Result<(), String> {
+    let output_token_limit = output_token_limit.unwrap_or(DEFAULT_OUTPUT_TOKEN_LIMIT);
+    if !matches!(output_token_limit, 1024 | 2048 | 4096) {
+        return Err("不支持的输出 token 上限，可选 1K、2K 或 4K".to_string());
+    }
+    profile.num_predict = output_token_limit;
     Ok(())
 }
 
@@ -854,12 +867,14 @@ async fn diagnose_chat(
     messages: Vec<ChatMessage>,
     mode: String,
     context_size: Option<u32>,
+    output_token_limit: Option<u32>,
 ) -> Result<Value, String> {
     if model.trim().is_empty() {
         return Err("模型名称不能为空".to_string());
     }
     let (messages, mut profile) = prepare_messages(messages, &mode)?;
     override_context_size(&mut profile, context_size)?;
+    override_output_token_limit(&mut profile, output_token_limit)?;
 
     request_json(
         &state.client,
@@ -890,6 +905,7 @@ async fn start_chat(
     messages: Vec<ChatMessage>,
     mode: String,
     context_size: Option<u32>,
+    output_token_limit: Option<u32>,
 ) -> Result<(), String> {
     if request_id.trim().is_empty() {
         return Err("请求 ID 不能为空".to_string());
@@ -899,6 +915,7 @@ async fn start_chat(
     }
     let (messages, mut profile) = prepare_messages(messages, &mode)?;
     override_context_size(&mut profile, context_size)?;
+    override_output_token_limit(&mut profile, output_token_limit)?;
     let cancellation = CancellationToken::new();
 
     {
@@ -1127,9 +1144,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cancel_active, override_context_size, parse_stream_line, profile_for_mode,
-        queue_stream_chunk, trim_fast_history, ActiveChat, ChatMessage, OllamaStreamChunk,
-        PendingBatch, STREAM_BATCH_MAX_BYTES,
+        cancel_active, override_context_size, override_output_token_limit, parse_stream_line,
+        profile_for_mode, queue_stream_chunk, trim_fast_history, ActiveChat, ChatMessage,
+        OllamaStreamChunk, PendingBatch, STREAM_BATCH_MAX_BYTES,
     };
     use bytes::BytesMut;
     use std::sync::{Arc, Mutex};
@@ -1161,6 +1178,19 @@ mod tests {
         override_context_size(&mut profile, Some(16384)).expect("override context size");
         assert_eq!(profile.num_ctx, 16384);
         assert!(override_context_size(&mut profile, Some(12345)).is_err());
+    }
+
+    #[test]
+    fn output_token_limit_override_replaces_mode_default() {
+        let mut profile = profile_for_mode("balanced").expect("balanced profile");
+        assert_eq!(profile.num_predict, 768);
+
+        override_output_token_limit(&mut profile, Some(1024)).expect("override output limit");
+        assert_eq!(profile.num_predict, 1024);
+
+        override_output_token_limit(&mut profile, Some(4096)).expect("override output limit");
+        assert_eq!(profile.num_predict, 4096);
+        assert!(override_output_token_limit(&mut profile, Some(12345)).is_err());
     }
 
     #[test]

@@ -12,7 +12,13 @@ import type {
   PersistedMessageInput,
   ServiceStatus,
 } from "./types";
-import { DEFAULT_CONTEXT_SIZE, type ContextSize, type PerformanceMode } from "./lib/performance";
+import {
+  DEFAULT_CONTEXT_SIZE,
+  DEFAULT_OUTPUT_TOKEN_LIMIT,
+  type ContextSize,
+  type OutputTokenLimit,
+  type PerformanceMode,
+} from "./lib/performance";
 
 export function getServiceStatus(): Promise<ServiceStatus> {
   return invoke<ServiceStatus>("get_service_status");
@@ -35,8 +41,9 @@ export function diagnoseChat(
   messages: ChatMessage[],
   mode: PerformanceMode,
   contextSize: ContextSize = DEFAULT_CONTEXT_SIZE,
+  outputTokenLimit: OutputTokenLimit = DEFAULT_OUTPUT_TOKEN_LIMIT,
 ): Promise<ChatResponse> {
-  return invoke<ChatResponse>("diagnose_chat", { model, messages, mode, contextSize });
+  return invoke<ChatResponse>("diagnose_chat", { model, messages, mode, contextSize, outputTokenLimit });
 }
 
 export function startChat(
@@ -45,8 +52,9 @@ export function startChat(
   mode: PerformanceMode,
   requestId: string,
   contextSize: ContextSize = DEFAULT_CONTEXT_SIZE,
+  outputTokenLimit: OutputTokenLimit = DEFAULT_OUTPUT_TOKEN_LIMIT,
 ): Promise<void> {
-  return invoke<void>("start_chat", { model, messages, mode, requestId, contextSize });
+  return invoke<void>("start_chat", { model, messages, mode, requestId, contextSize, outputTokenLimit });
 }
 
 export function stopChat(requestId: string): Promise<boolean> {

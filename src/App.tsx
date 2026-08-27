@@ -26,9 +26,12 @@ import { deriveChatMetrics, formatMetric } from "./lib/metrics";
 import {
   CONTEXT_SIZE_OPTIONS,
   DEFAULT_CONTEXT_SIZE,
+  DEFAULT_OUTPUT_TOKEN_LIMIT,
+  OUTPUT_TOKEN_LIMIT_OPTIONS,
   PERFORMANCE_PROFILES,
   profileForMode,
   type ContextSize,
+  type OutputTokenLimit,
   type PerformanceMode,
 } from "./lib/performance";
 import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
@@ -93,6 +96,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: "",
   modelAliases: {},
   contextSize: DEFAULT_CONTEXT_SIZE,
+  outputTokenLimit: DEFAULT_OUTPUT_TOKEN_LIMIT,
 };
 
 function modelName(model: OllamaModel): string {
@@ -671,7 +675,7 @@ export default function App() {
         mode,
         elapsedFromT0Ms: requestStartedAt.current - requestUserStartedAt.current,
       });
-      await startChat(selectedModel, prepared, mode, requestId, settings.contextSize);
+      await startChat(selectedModel, prepared, mode, requestId, settings.contextSize, settings.outputTokenLimit);
       recordDiagnostic(requestId, "T2-invoke-return", {
         invokeMs: performance.now() - requestStartedAt.current,
         elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
@@ -1004,6 +1008,21 @@ export default function App() {
                 }))}
               >
                 {CONTEXT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size / 1024}K</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="settings-grid settings-grid-single">
+            <div className="settings-field">
+              <label htmlFor="output-token-limit">输出 token 上限</label>
+              <select
+                id="output-token-limit"
+                value={settingsDraft.outputTokenLimit}
+                onChange={(event) => setSettingsDraft((current) => ({
+                  ...current,
+                  outputTokenLimit: Number(event.target.value) as OutputTokenLimit,
+                }))}
+              >
+                {OUTPUT_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit / 1024}K</option>)}
               </select>
             </div>
           </div>

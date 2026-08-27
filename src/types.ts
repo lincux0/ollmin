@@ -120,6 +120,7 @@ export interface AppSettings {
   defaultModel: string;
   modelAliases: Record<string, string>;
   contextSize: import("./lib/performance").ContextSize;
+  outputTokenLimit: import("./lib/performance").OutputTokenLimit;
 }
 
 export interface ExportPayload {
