@@ -205,6 +205,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [modelAliasesExpanded, setModelAliasesExpanded] = useState(false);
+  const [exportExpanded, setExportExpanded] = useState(false);
   const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
@@ -1005,7 +1006,7 @@ export default function App() {
                 <option value="">自动选择第一个可用模型</option>
                 {models.map((model) => {
                   const name = modelName(model);
-                  return <option key={name} value={name}>{name}</option>;
+                  return <option key={name} value={name}>{modelAliasFor(settingsDraft.modelAliases, name)}</option>;
                 })}
               </select>
             </div>
@@ -1052,15 +1053,26 @@ export default function App() {
             </div>
           </div>
           <p className="settings-note">推理上限仅在开启思考的模式中生效；快速模式关闭思考，“不限”表示不额外限制推理输出。Ollama 会将推理与正文计入同一生成预算，Ollmin 按两项上限合并分配。</p>
-          <button
-            type="button"
-            className="settings-disclosure"
-            aria-expanded={modelAliasesExpanded}
-            onClick={() => setModelAliasesExpanded((expanded) => !expanded)}
-          >
-            <span>模型别名</span>
-            <span aria-hidden="true">{modelAliasesExpanded ? "⌃" : "⌄"}</span>
-          </button>
+          <div className="settings-disclosure-row">
+            <button
+              type="button"
+              className="settings-disclosure"
+              aria-expanded={modelAliasesExpanded}
+              onClick={() => setModelAliasesExpanded((expanded) => !expanded)}
+            >
+              <span>模型别名</span>
+              <span aria-hidden="true">{modelAliasesExpanded ? "⌃" : "⌄"}</span>
+            </button>
+            <button
+              type="button"
+              className="settings-disclosure"
+              aria-expanded={exportExpanded}
+              onClick={() => setExportExpanded((expanded) => !expanded)}
+            >
+              <span>导出当前会话</span>
+              <span aria-hidden="true">{exportExpanded ? "⌃" : "⌄"}</span>
+            </button>
+          </div>
           {modelAliasesExpanded ? <div className="model-alias-list">
             {models.length === 0 ? <p className="settings-note">暂无可用模型，请先刷新连接。</p> : models.map((model) => {
                 const name = modelName(model);
@@ -1084,16 +1096,15 @@ export default function App() {
                 );
               })}
           </div> : null}
-          <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
-          <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
-          <div className="settings-export">
-            <p className="settings-section-label">导出当前会话</p>
+          {exportExpanded ? <div className="settings-export">
             <div className="settings-export-actions">
               <button className="ghost-button" onClick={() => void exportCurrent("markdown")} disabled={!currentConversationId || busy}>导出 Markdown</button>
               <button className="ghost-button" onClick={() => void exportCurrent("json")} disabled={!currentConversationId || busy}>导出 JSON</button>
             </div>
             {!currentConversationId ? <small>打开或创建会话后可导出。</small> : null}
-          </div>
+          </div> : null}
+          <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
+          <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
           <div className="settings-danger"><button className="danger-button" onClick={() => void clearLocalConversations()}>清空所有本地会话</button></div>
           <div className="modal-actions"><button className="ghost-button" onClick={() => setShowSettings(false)}>取消</button><button className="primary-button" onClick={() => void saveSettingsDraft()} disabled={savingSettings}>{savingSettings ? "保存中…" : "保存设置"}</button></div>
         </section>
