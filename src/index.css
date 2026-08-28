@@ -104,6 +104,11 @@ select:focus, textarea:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba
 .attachment-chip button { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #9d725f; font-size: 17px; line-height: 1; }
 .attachment-chip button:hover:not(:disabled) { background: #efe0d5; color: #a45e47; }
 .composer-attachments > p { margin: 0; line-height: 1.4; }
+.message-attachments { display: grid; gap: 5px; margin-top: 10px; }
+.message-attachment { min-width: 0; padding: 7px 9px; border: 1px solid #d7c6b9; border-radius: 8px; background: #f7eee8; text-align: left; }
+.message-attachment strong, .message-attachment small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-attachment strong { color: #755b4d; font-size: 10px; }
+.message-attachment small { margin-top: 2px; color: #9a8273; font-size: 9px; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
 .composer-selection { display: inline-flex; align-items: center; min-width: 0; max-width: 70%; color: #70665d; }
 .composer-file-button { height: 30px; padding: 0 4px; border: 0; border-radius: 7px; background: transparent; color: #a45e47; font-size: 11px; font-weight: 800; white-space: nowrap; }
@@ -230,6 +235,9 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 [data-theme="dark"] .attachment-chip small, [data-theme="dark"] .composer-attachments > p { color: #aaa096; }
 [data-theme="dark"] .attachment-chip button { color: #c69b86; }
 [data-theme="dark"] .attachment-chip button:hover:not(:disabled), [data-theme="dark"] .composer-file-button:hover:not(:disabled) { background: #40332b; }
+[data-theme="dark"] .message-attachment { border-color: #514238; background: #332a25; }
+[data-theme="dark"] .message-attachment strong { color: #dfcbbd; }
+[data-theme="dark"] .message-attachment small { color: #b39b8c; }
 [data-theme="dark"] .composer-file-button { color: #d5a38b; }
 [data-theme="dark"] select, [data-theme="dark"] textarea, [data-theme="dark"] input { border-color: #4a433a; background: #2a2723; color: #eee9e1; }
 [data-theme="dark"] .composer-select { border: 0; background: transparent; color: #d6c9bd; }

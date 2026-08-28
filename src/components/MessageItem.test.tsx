@@ -40,6 +40,35 @@ describe("message rendering boundaries", () => {
     expect(html).not.toContain(">模型</span>");
   });
 
+  it("renders local attachments beneath the user message", () => {
+    const html = renderToStaticMarkup(
+      <MessageItem
+        message={{
+          id: "user-attachment",
+          role: "user",
+          content: "请根据附件总结。",
+          status: "done",
+          attachments: [{
+            id: "attachment-1",
+            name: "调研方案.pdf",
+            kind: "PDF",
+            sizeBytes: 100,
+            textCharacters: 500,
+            chunkCount: 2,
+            pageCount: 3,
+            sheets: [],
+            warnings: [],
+          }],
+        }}
+        copied={false}
+        onCopy={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("调研方案.pdf");
+    expect(html).toContain("已作为本地参考资料发送");
+  });
+
   it("only invalidates a message row when its message or copied state changes", () => {
     const onCopy = vi.fn();
     expect(areMessageItemPropsEqual(

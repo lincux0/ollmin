@@ -15,7 +15,6 @@ import {
   listConversations,
   parseLocalAttachments,
   renameConversation,
-  removeConversationAttachment,
   saveConversationAttachments,
   saveMessage,
   startChat,
@@ -69,6 +68,7 @@ interface ConversationMessage extends ChatMessage {
   createdAt?: string;
   metrics?: ChatMetrics | null;
   modelAlias?: string;
+  attachments?: AttachmentSummary[];
 }
 
 interface AssistantBuffer {
@@ -164,6 +164,7 @@ function fromStoredMessage(message: StoredMessage, alias?: string): Conversation
     createdAt: message.createdAt,
     metrics: message.metrics ?? null,
     modelAlias: alias,
+    attachments: message.attachments,
   };
 }
 
@@ -577,7 +578,7 @@ export default function App() {
       followMessagesRef.current = true;
       const restored = detail.messages.map((message) => fromStoredMessage(message, activeAlias));
       setMessages(restored);
-      setAttachments(detail.attachments);
+      setAttachments([]);
       const lastWithMetrics = [...detail.messages].reverse().find((message) => message.metrics);
       setLastMetrics(lastWithMetrics?.metrics ?? null);
       setLastElapsedMs(lastWithMetrics?.metrics?.wallMs ?? null);
@@ -615,6 +616,7 @@ export default function App() {
     const text = draft.trim();
     if (!selectedModel || !text || busy || warming || loadingConversation) return;
     const activeModelAlias = modelAlias(currentModelAlias, selectedModel);
+    const messageAttachments = attachments;
 
     const history: ChatMessage[] = [
       ...messages.filter((message) => message.role === "user" || message.role === "assistant").map(toChatMessage),
@@ -628,7 +630,14 @@ export default function App() {
     recordDiagnostic(requestId, "T0", { mode, elapsedFromT0Ms: 0 });
     const conversationId = conversationIdRef.current ?? newId("conversation");
     const hadConversation = Boolean(conversationIdRef.current);
-    const user: ConversationMessage = { id: newId("user"), role: "user", content: text, status: "done", createdAt: new Date().toISOString() };
+    const user: ConversationMessage = {
+      id: newId("user"),
+      role: "user",
+      content: text,
+      status: "done",
+      createdAt: new Date().toISOString(),
+      attachments: messageAttachments,
+    };
     const assistant: ConversationMessage = {
       id: newId("assistant"),
       role: "assistant",
@@ -649,6 +658,7 @@ export default function App() {
     setMessages((current) => [...current, user, assistant]);
     followMessagesRef.current = true;
     setDraft("");
+    setAttachments([]);
     setError(null);
     setLastMetrics(null);
     setLastElapsedMs(null);
@@ -698,8 +708,12 @@ export default function App() {
         elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
       });
       requestStartedAt.current = performance.now();
-      if (attachments.length > 0) {
-        await saveConversationAttachments(conversationId, attachments.map((attachment) => attachment.id));
+      if (messageAttachments.length > 0) {
+        await saveConversationAttachments(
+          conversationId,
+          user.id,
+          messageAttachments.map((attachment) => attachment.id),
+        );
       }
       recordDiagnostic(requestId, "T2-invoke", {
         mode,
@@ -714,7 +728,7 @@ export default function App() {
         settings.outputTokenLimit,
         settings.reasoningTokenLimit,
         conversationId,
-        attachments.map((attachment) => attachment.id),
+        messageAttachments.map((attachment) => attachment.id),
       );
       recordDiagnostic(requestId, "T2-invoke-return", {
         invokeMs: performance.now() - requestStartedAt.current,
@@ -768,16 +782,9 @@ export default function App() {
     }
   }
 
-  async function removeLocalAttachment(id: string) {
+  function removeLocalAttachment(id: string) {
     if (parsingAttachments) return;
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
-    const conversationId = conversationIdRef.current;
-    if (!conversationId) return;
-    try {
-      await removeConversationAttachment(conversationId, id);
-    } catch (attachmentError) {
-      setError(`移除会话附件失败：${errorText(attachmentError)}`);
-    }
   }
 
   async function cancelMessage() {

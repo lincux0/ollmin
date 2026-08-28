@@ -97,7 +97,7 @@ Use **+ File** in the composer to attach up to three local PDF, DOCX, XLS, or XL
 - Attachment context is capped at roughly 3K / 6K / 9K characters for 4K / 8K / 16K contexts;
 - The original file is never uploaded or copied into the application data directory;
 - Scanned/image-only PDFs are not OCR'd, and legacy `.doc` files must be saved as `.docx` first;
-- Attached excerpts remain active in the current conversation until you remove them.
+- Attached excerpts belong to the user message that sends them; later messages do not resend them automatically.
 
 ## How it works
 

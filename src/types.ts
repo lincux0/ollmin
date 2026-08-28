@@ -95,6 +95,7 @@ export interface StoredMessage {
   status: "streaming" | "done" | "cancelled" | "error";
   createdAt: string;
   metrics?: ChatMetrics | null;
+  attachments: AttachmentSummary[];
 }
 
 export interface PersistedMessageInput {

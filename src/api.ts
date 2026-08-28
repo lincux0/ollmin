@@ -85,8 +85,8 @@ export function startChat(
   });
 }
 
-export function saveConversationAttachments(conversationId: string, attachmentIds: string[]): Promise<void> {
-  return invoke<void>("save_conversation_attachments", { conversationId, attachmentIds });
+export function saveConversationAttachments(conversationId: string, messageId: string, attachmentIds: string[]): Promise<void> {
+  return invoke<void>("save_conversation_attachments", { conversationId, messageId, attachmentIds });
 }
 
 export function removeConversationAttachment(conversationId: string, attachmentId: string): Promise<void> {

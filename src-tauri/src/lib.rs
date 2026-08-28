@@ -942,6 +942,7 @@ fn save_conversation_attachments(
     database: State<'_, DatabaseState>,
     attachment_state: State<'_, AttachmentState>,
     conversation_id: String,
+    message_id: String,
     attachment_ids: Vec<String>,
 ) -> Result<(), String> {
     if attachment_ids.is_empty() {
@@ -967,7 +968,7 @@ fn save_conversation_attachments(
                 .ok_or_else(|| "附件解析结果已失效，请重新添加后再发送".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    storage::save_conversation_attachments(&connection, &conversation_id, &additions)
+    storage::save_conversation_attachments(&connection, &conversation_id, &message_id, &additions)
 }
 
 #[tauri::command]

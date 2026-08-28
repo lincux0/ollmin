@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { ChatMessage } from "../types";
+import type { AttachmentSummary, ChatMessage } from "../types";
 import MarkdownContent from "./MarkdownContent";
 
 export type MessageItemStatus = "streaming" | "done" | "cancelled" | "error";
@@ -12,6 +12,7 @@ export interface MessageItemData {
   status: MessageItemStatus;
   error?: string;
   modelAlias?: string;
+  attachments?: AttachmentSummary[];
 }
 
 export interface MessageItemProps {
@@ -42,6 +43,16 @@ export function areMessageItemPropsEqual(previous: MessageItemProps, next: Messa
   return previous.message === next.message && previous.copied === next.copied;
 }
 
+function attachmentDetail(attachment: AttachmentSummary): string {
+  if (attachment.kind === "Excel") {
+    const rows = attachment.sheets.reduce((total, sheet) => total + sheet.rows, 0);
+    return `${attachment.sheets.length} 个工作表 · ${rows} 行`;
+  }
+  return attachment.kind === "PDF"
+    ? `${attachment.pageCount ?? 0} 页 · ${attachment.chunkCount} 个片段`
+    : `${attachment.chunkCount} 个片段`;
+}
+
 function MessageItem({ message, copied, onCopy }: MessageItemProps) {
   return (
     <article className={`message ${message.role} ${message.status}`}>
@@ -58,6 +69,16 @@ function MessageItem({ message, copied, onCopy }: MessageItemProps) {
         {message.role === "assistant" ? <MarkdownContent content={message.content} /> : <p>{message.content}</p>}
         {message.status === "streaming" ? <span className="cursor" /> : null}
       </div>
+      {message.role === "user" && message.attachments && message.attachments.length > 0 ? (
+        <div className="message-attachments" aria-label="随消息发送的附件">
+          {message.attachments.map((attachment) => (
+            <div className="message-attachment" key={attachment.id} title={attachment.warnings.join("\n") || attachment.name}>
+              <strong>{attachment.kind} · {attachment.name}</strong>
+              <small>{attachmentDetail(attachment)} · 已作为本地参考资料发送</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {message.error ? <p className="message-error">{message.error}</p> : null}
       {message.role === "assistant" && message.content ? (
         <button className="copy-button" onClick={() => void onCopy(message)}>

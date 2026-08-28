@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 const DEFAULT_CONTEXT_SIZE: u32 = 4096;
 const DEFAULT_OUTPUT_TOKEN_LIMIT: u32 = 2048;
 const DEFAULT_REASONING_TOKEN_LIMIT: u32 = 2048;
@@ -35,6 +35,7 @@ pub struct StoredMessage {
     pub status: String,
     pub created_at: String,
     pub metrics: Option<Value>,
+    pub attachments: Vec<AttachmentSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,6 +271,7 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                    text_characters INTEGER NOT NULL,
                    chunk_count INTEGER NOT NULL,
                    page_count INTEGER,
+                   message_id TEXT,
                    sheets_json TEXT NOT NULL,
                    warnings_json TEXT NOT NULL,
                    payload_json TEXT NOT NULL,
@@ -280,6 +282,28 @@ pub fn migrate(connection: &Connection) -> Result<(), String> {
                    ON conversation_attachments(conversation_id, created_at ASC);",
             )
             .map_err(|error| format!("创建会话附件表失败：{error}"))?;
+        let has_message_id: bool = connection
+            .prepare("PRAGMA table_info(conversation_attachments)")
+            .map_err(|error| format!("读取会话附件表结构失败：{error}"))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| format!("读取会话附件字段失败：{error}"))?
+            .filter_map(Result::ok)
+            .any(|name| name == "message_id");
+        if !has_message_id {
+            connection
+                .execute(
+                    "ALTER TABLE conversation_attachments ADD COLUMN message_id TEXT",
+                    [],
+                )
+                .map_err(|error| format!("升级会话附件消息关联字段失败：{error}"))?;
+        }
+        connection
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_attachments_message
+                 ON conversation_attachments(message_id, created_at ASC)",
+                [],
+            )
+            .map_err(|error| format!("创建附件消息索引失败：{error}"))?;
         connection
             .execute(
                 "INSERT OR IGNORE INTO settings(key, value) VALUES ('context_size', ?1)",
@@ -444,13 +468,26 @@ pub fn get_conversation(connection: &Connection, id: &str) -> Result<Conversatio
                 status: row.get(5)?,
                 created_at: row.get(6)?,
                 metrics: metrics_json.and_then(|value| serde_json::from_str(&value).ok()),
+                attachments: Vec::new(),
             })
         })
         .map_err(|error| format!("读取消息失败：{error}"))?;
     let messages = rows
         .map(|row| row.map_err(|error| format!("读取消息记录失败：{error}")))
         .collect::<Result<Vec<_>, _>>()?;
-    let attachments = list_conversation_attachments(connection, &id)?;
+    let attachment_records = list_conversation_attachment_records(connection, &id)?;
+    let attachments = attachment_records
+        .iter()
+        .map(|(_, attachment)| attachment.clone())
+        .collect::<Vec<_>>();
+    let mut messages = messages;
+    for message in &mut messages {
+        message.attachments = attachment_records
+            .iter()
+            .filter(|(message_id, _)| message_id.as_deref() == Some(message.id.as_str()))
+            .map(|(_, attachment)| attachment.clone())
+            .collect();
+    }
     Ok(ConversationDetail {
         conversation,
         messages,
@@ -462,9 +499,21 @@ fn list_conversation_attachments(
     connection: &Connection,
     conversation_id: &str,
 ) -> Result<Vec<AttachmentSummary>, String> {
+    Ok(
+        list_conversation_attachment_records(connection, conversation_id)?
+            .into_iter()
+            .map(|(_, attachment)| attachment)
+            .collect(),
+    )
+}
+
+fn list_conversation_attachment_records(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Vec<(Option<String>, AttachmentSummary)>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, name, kind, size_bytes, text_characters, chunk_count, page_count,
+            "SELECT id, message_id, name, kind, size_bytes, text_characters, chunk_count, page_count,
                     sheets_json, warnings_json
              FROM conversation_attachments
              WHERE conversation_id = ?1
@@ -473,19 +522,22 @@ fn list_conversation_attachments(
         .map_err(|error| format!("准备会话附件查询失败：{error}"))?;
     let rows = statement
         .query_map(params![conversation_id], |row| {
-            let sheets_json: String = row.get(7)?;
-            let warnings_json: String = row.get(8)?;
-            Ok(AttachmentSummary {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                size_bytes: row.get::<_, i64>(3)? as u64,
-                text_characters: row.get::<_, i64>(4)? as usize,
-                chunk_count: row.get::<_, i64>(5)? as usize,
-                page_count: row.get::<_, Option<i64>>(6)?.map(|value| value as usize),
-                sheets: serde_json::from_str(&sheets_json).unwrap_or_default(),
-                warnings: serde_json::from_str(&warnings_json).unwrap_or_default(),
-            })
+            let sheets_json: String = row.get(8)?;
+            let warnings_json: String = row.get(9)?;
+            Ok((
+                row.get(1)?,
+                AttachmentSummary {
+                    id: row.get(0)?,
+                    name: row.get(2)?,
+                    kind: row.get(3)?,
+                    size_bytes: row.get::<_, i64>(4)? as u64,
+                    text_characters: row.get::<_, i64>(5)? as usize,
+                    chunk_count: row.get::<_, i64>(6)? as usize,
+                    page_count: row.get::<_, Option<i64>>(7)?.map(|value| value as usize),
+                    sheets: serde_json::from_str(&sheets_json).unwrap_or_default(),
+                    warnings: serde_json::from_str(&warnings_json).unwrap_or_default(),
+                },
+            ))
         })
         .map_err(|error| format!("读取会话附件失败：{error}"))?;
     rows.map(|row| row.map_err(|error| format!("读取会话附件记录失败：{error}")))
@@ -495,9 +547,11 @@ fn list_conversation_attachments(
 pub fn save_conversation_attachments(
     connection: &Connection,
     conversation_id: &str,
+    message_id: &str,
     attachments: &[ParsedAttachment],
 ) -> Result<(), String> {
     let conversation_id = required(conversation_id, "会话 ID")?;
+    let message_id = required(message_id, "消息 ID")?;
     let exists: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
@@ -507,6 +561,16 @@ pub fn save_conversation_attachments(
         .map_err(|error| format!("确认会话附件归属失败：{error}"))?;
     if !exists {
         return Err("会话不存在，无法保存附件".to_string());
+    }
+    let message_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND conversation_id = ?2)",
+            params![message_id, conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("确认附件消息归属失败：{error}"))?;
+    if !message_exists {
+        return Err("消息不存在或不属于当前会话，无法保存附件".to_string());
     }
     for attachment in attachments {
         let summary = &attachment.summary;
@@ -520,12 +584,13 @@ pub fn save_conversation_attachments(
             .execute(
                 "INSERT INTO conversation_attachments(
                    id, conversation_id, name, kind, size_bytes, text_characters, chunk_count,
-                   page_count, sheets_json, warnings_json, payload_json, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                   page_count, message_id, sheets_json, warnings_json, payload_json, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                  ON CONFLICT(id) DO UPDATE SET
                    name = excluded.name, kind = excluded.kind, size_bytes = excluded.size_bytes,
                    text_characters = excluded.text_characters, chunk_count = excluded.chunk_count,
-                   page_count = excluded.page_count, sheets_json = excluded.sheets_json,
+                   page_count = excluded.page_count, message_id = excluded.message_id,
+                   sheets_json = excluded.sheets_json,
                    warnings_json = excluded.warnings_json, payload_json = excluded.payload_json
                  WHERE conversation_attachments.conversation_id = excluded.conversation_id",
                 params![
@@ -537,6 +602,7 @@ pub fn save_conversation_attachments(
                     summary.text_characters as i64,
                     summary.chunk_count as i64,
                     summary.page_count.map(|value| value as i64),
+                    message_id,
                     sheets_json,
                     warnings_json,
                     payload_json,
@@ -1138,6 +1204,42 @@ mod tests {
     }
 
     #[test]
+    fn migration_adds_message_id_to_existing_attachment_table() {
+        let connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_migrations(version, applied_at) VALUES (8, '0');
+                 CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+                 CREATE TABLE conversation_attachments (
+                   id TEXT PRIMARY KEY NOT NULL,
+                   conversation_id TEXT NOT NULL,
+                   name TEXT NOT NULL,
+                   kind TEXT NOT NULL,
+                   size_bytes INTEGER NOT NULL,
+                   text_characters INTEGER NOT NULL,
+                   chunk_count INTEGER NOT NULL,
+                   page_count INTEGER,
+                   sheets_json TEXT NOT NULL,
+                   warnings_json TEXT NOT NULL,
+                   payload_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+                 );",
+            )
+            .expect("create v8 attachment schema");
+
+        migrate(&connection).expect("upgrade v8 attachment schema");
+        let has_message_id: bool = connection
+            .prepare("PRAGMA table_info(conversation_attachments)")
+            .expect("inspect schema")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("read schema")
+            .filter_map(Result::ok)
+            .any(|name| name == "message_id");
+        assert!(has_message_id);
+    }
+
+    #[test]
     fn messages_cascade_when_conversation_is_deleted() {
         let connection = database();
         create_conversation_with_alias(
@@ -1154,7 +1256,7 @@ mod tests {
             message("message-a", "conversation-a", Some("private")),
         )
         .expect("save");
-        save_conversation_attachments(&connection, "conversation-a", &[attachment()])
+        save_conversation_attachments(&connection, "conversation-a", "message-a", &[attachment()])
             .expect("save attachment");
         clear_conversations(&connection).expect("clear");
         assert!(get_conversation(&connection, "conversation-a").is_err());
@@ -1182,11 +1284,22 @@ mod tests {
             None,
         )
         .expect("create");
-        save_conversation_attachments(&connection, "conversation-attachment", &[attachment()])
-            .expect("save attachment");
+        save_message(
+            &connection,
+            message("message-attachment", "conversation-attachment", None),
+        )
+        .expect("save message");
+        save_conversation_attachments(
+            &connection,
+            "conversation-attachment",
+            "message-attachment",
+            &[attachment()],
+        )
+        .expect("save attachment");
         let detail = get_conversation(&connection, "conversation-attachment").expect("read");
         assert_eq!(detail.attachments.len(), 1);
         assert_eq!(detail.attachments[0].name, "资料.pdf");
+        assert_eq!(detail.messages[0].attachments[0].name, "资料.pdf");
         assert_eq!(
             load_attachment_payloads(
                 &connection,
