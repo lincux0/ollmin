@@ -69,6 +69,8 @@ export function startChat(
   contextSize: ContextSize = DEFAULT_CONTEXT_SIZE,
   outputTokenLimit: OutputTokenLimit = DEFAULT_OUTPUT_TOKEN_LIMIT,
   reasoningTokenLimit: ReasoningTokenLimit = DEFAULT_REASONING_TOKEN_LIMIT,
+  conversationId: string,
+  attachmentIds: string[] = [],
 ): Promise<void> {
   return invoke<void>("start_chat", {
     model,
@@ -78,7 +80,17 @@ export function startChat(
     contextSize,
     outputTokenLimit,
     reasoningTokenLimit,
+    conversationId,
+    attachmentIds,
   });
+}
+
+export function saveConversationAttachments(conversationId: string, attachmentIds: string[]): Promise<void> {
+  return invoke<void>("save_conversation_attachments", { conversationId, attachmentIds });
+}
+
+export function removeConversationAttachment(conversationId: string, attachmentId: string): Promise<void> {
+  return invoke<void>("remove_conversation_attachment", { conversationId, attachmentId });
 }
 
 export function stopChat(requestId: string): Promise<boolean> {

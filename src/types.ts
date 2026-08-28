@@ -111,6 +111,7 @@ export interface PersistedMessageInput {
 export interface ConversationDetail {
   conversation: ConversationSummary;
   messages: StoredMessage[];
+  attachments: AttachmentSummary[];
 }
 
 export interface AppSettings {

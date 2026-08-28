@@ -3,6 +3,7 @@ use futures_util::StreamExt;
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use storage::{AppSettings, ConversationDetail, ConversationSummary, ExportPayload, MessageInput};
@@ -107,6 +108,11 @@ impl Default for ChatState {
 
 struct DatabaseState {
     connection: Mutex<rusqlite::Connection>,
+}
+
+#[derive(Default)]
+struct AttachmentState {
+    parsed: Mutex<HashMap<String, attachments::ParsedAttachment>>,
 }
 
 #[derive(Default)]
@@ -374,6 +380,51 @@ fn prepare_messages(
         messages
     };
     Ok((prepared, profile))
+}
+
+fn inject_attachment_context(
+    mut messages: Vec<ChatMessage>,
+    mode: &str,
+    profile: &GenerationProfile,
+    attachments: &[attachments::ParsedAttachment],
+) -> Result<Vec<ChatMessage>, String> {
+    let Some(context) = attachments::build_context(
+        attachments,
+        messages
+            .last()
+            .map(|message| message.content.as_str())
+            .unwrap_or_default(),
+        profile.num_ctx,
+    )?
+    else {
+        return Ok(messages);
+    };
+    if mode == "fast" {
+        // Give attached material priority over older turns while keeping the
+        // newest user message, which is the fast-mode contract.
+        let context_tokens = estimate_tokens(&ChatMessage {
+            role: "system".to_string(),
+            content: context.clone(),
+            thinking: None,
+        });
+        let history_budget = profile
+            .max_history_tokens
+            .saturating_sub(context_tokens.min(profile.max_history_tokens / 2));
+        messages = trim_fast_history(&messages, history_budget.max(128));
+    }
+    let insertion = messages
+        .iter()
+        .rposition(|message| message.role == "user")
+        .unwrap_or(messages.len());
+    messages.insert(
+        insertion,
+        ChatMessage {
+            role: "system".to_string(),
+            content: context,
+            thinking: None,
+        },
+    );
+    Ok(messages)
 }
 
 async fn request_json(
@@ -866,11 +917,70 @@ async fn get_models(state: State<'_, ChatState>) -> Result<Value, String> {
 
 #[tauri::command]
 async fn parse_local_attachments(
+    attachment_state: State<'_, AttachmentState>,
     paths: Vec<String>,
 ) -> Result<Vec<attachments::AttachmentSummary>, String> {
-    tauri::async_runtime::spawn_blocking(move || attachments::parse_paths(paths))
+    let parsed = tauri::async_runtime::spawn_blocking(move || attachments::parse_paths(paths))
         .await
-        .map_err(|error| format!("本地文件解析任务异常结束：{error}"))?
+        .map_err(|error| format!("本地文件解析任务异常结束：{error}"))??;
+    let summaries = parsed
+        .iter()
+        .map(|attachment| attachment.summary.clone())
+        .collect::<Vec<_>>();
+    let mut cache = attachment_state
+        .parsed
+        .lock()
+        .map_err(|_| "无法获取本地附件缓存锁".to_string())?;
+    for attachment in parsed {
+        cache.insert(attachment.summary.id.clone(), attachment);
+    }
+    Ok(summaries)
+}
+
+#[tauri::command]
+fn save_conversation_attachments(
+    database: State<'_, DatabaseState>,
+    attachment_state: State<'_, AttachmentState>,
+    conversation_id: String,
+    attachment_ids: Vec<String>,
+) -> Result<(), String> {
+    if attachment_ids.is_empty() {
+        return Ok(());
+    }
+    let connection = database
+        .connection
+        .lock()
+        .map_err(|_| "无法获取本地数据库锁".to_string())?;
+    let existing =
+        storage::existing_attachment_ids(&connection, &conversation_id, &attachment_ids)?;
+    let cache = attachment_state
+        .parsed
+        .lock()
+        .map_err(|_| "无法获取本地附件缓存锁".to_string())?;
+    let additions = attachment_ids
+        .iter()
+        .filter(|id| !existing.iter().any(|saved| saved == *id))
+        .map(|id| {
+            cache
+                .get(id)
+                .cloned()
+                .ok_or_else(|| "附件解析结果已失效，请重新添加后再发送".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    storage::save_conversation_attachments(&connection, &conversation_id, &additions)
+}
+
+#[tauri::command]
+fn remove_conversation_attachment(
+    database: State<'_, DatabaseState>,
+    conversation_id: String,
+    attachment_id: String,
+) -> Result<(), String> {
+    let connection = database
+        .connection
+        .lock()
+        .map_err(|_| "无法获取本地数据库锁".to_string())?;
+    storage::remove_conversation_attachment(&connection, &conversation_id, &attachment_id)
 }
 
 #[tauri::command]
@@ -940,6 +1050,7 @@ async fn diagnose_chat(
 async fn start_chat(
     app: AppHandle,
     state: State<'_, ChatState>,
+    database: State<'_, DatabaseState>,
     request_id: String,
     model: String,
     messages: Vec<ChatMessage>,
@@ -947,6 +1058,8 @@ async fn start_chat(
     context_size: Option<u32>,
     output_token_limit: Option<u32>,
     reasoning_token_limit: Option<u32>,
+    conversation_id: String,
+    attachment_ids: Vec<String>,
 ) -> Result<(), String> {
     if request_id.trim().is_empty() {
         return Err("请求 ID 不能为空".to_string());
@@ -958,6 +1071,17 @@ async fn start_chat(
     override_context_size(&mut profile, context_size)?;
     override_output_token_limit(&mut profile, output_token_limit)?;
     override_reasoning_token_limit(&mut profile, reasoning_token_limit)?;
+    let messages = if attachment_ids.is_empty() {
+        messages
+    } else {
+        let connection = database
+            .connection
+            .lock()
+            .map_err(|_| "无法获取本地数据库锁".to_string())?;
+        let attachments =
+            storage::load_attachment_payloads(&connection, &conversation_id, &attachment_ids)?;
+        inject_attachment_context(messages, &mode, &profile, &attachments)?
+    };
     let cancellation = CancellationToken::new();
 
     {
@@ -1147,6 +1271,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ChatState::default())
+        .manage(AttachmentState::default())
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -1164,6 +1289,8 @@ pub fn run() {
             get_service_status,
             get_models,
             parse_local_attachments,
+            save_conversation_attachments,
+            remove_conversation_attachment,
             get_loaded_models,
             warm_model,
             diagnose_chat,

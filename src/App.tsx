@@ -15,6 +15,8 @@ import {
   listConversations,
   parseLocalAttachments,
   renameConversation,
+  removeConversationAttachment,
+  saveConversationAttachments,
   saveMessage,
   startChat,
   stopChat,
@@ -575,6 +577,7 @@ export default function App() {
       followMessagesRef.current = true;
       const restored = detail.messages.map((message) => fromStoredMessage(message, activeAlias));
       setMessages(restored);
+      setAttachments(detail.attachments);
       const lastWithMetrics = [...detail.messages].reverse().find((message) => message.metrics);
       setLastMetrics(lastWithMetrics?.metrics ?? null);
       setLastElapsedMs(lastWithMetrics?.metrics?.wallMs ?? null);
@@ -600,6 +603,7 @@ export default function App() {
     setMode(settings.defaultMode);
     followMessagesRef.current = true;
     setMessages([]);
+    setAttachments([]);
     setLastMetrics(null);
     setLastElapsedMs(null);
     setDraft("");
@@ -694,6 +698,9 @@ export default function App() {
         elapsedFromT0Ms: performance.now() - requestUserStartedAt.current,
       });
       requestStartedAt.current = performance.now();
+      if (attachments.length > 0) {
+        await saveConversationAttachments(conversationId, attachments.map((attachment) => attachment.id));
+      }
       recordDiagnostic(requestId, "T2-invoke", {
         mode,
         elapsedFromT0Ms: requestStartedAt.current - requestUserStartedAt.current,
@@ -706,6 +713,8 @@ export default function App() {
         settings.contextSize,
         settings.outputTokenLimit,
         settings.reasoningTokenLimit,
+        conversationId,
+        attachments.map((attachment) => attachment.id),
       );
       recordDiagnostic(requestId, "T2-invoke-return", {
         invokeMs: performance.now() - requestStartedAt.current,
@@ -759,9 +768,16 @@ export default function App() {
     }
   }
 
-  function removeLocalAttachment(id: string) {
+  async function removeLocalAttachment(id: string) {
     if (parsingAttachments) return;
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) return;
+    try {
+      await removeConversationAttachment(conversationId, id);
+    } catch (attachmentError) {
+      setError(`移除会话附件失败：${errorText(attachmentError)}`);
+    }
   }
 
   async function cancelMessage() {
@@ -997,10 +1013,10 @@ export default function App() {
                   <strong>{attachment.kind} · {attachment.name}</strong>
                   <small>{attachmentDetail(attachment)} · 已本地解析</small>
                 </div>
-                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => removeLocalAttachment(attachment.id)} disabled={parsingAttachments}>×</button>
+                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => void removeLocalAttachment(attachment.id)} disabled={parsingAttachments}>×</button>
               </div>
             ))}
-            <p>附件内容尚未发送给模型；将在后续“上下文注入”阶段接入对话。</p>
+            <p>发送时会按当前问题选取有限片段作为本地参考资料；完整文件不会上传。</p>
           </div> : null}
           <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
           <div className="composer-toolbar">
