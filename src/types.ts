@@ -130,6 +130,26 @@ export interface ExportPayload {
   content: string;
 }
 
+export interface SpreadsheetSheetSummary {
+  name: string;
+  rows: number;
+  columns: number;
+  nonEmptyCells: number;
+  headers: string[];
+}
+
+export interface AttachmentSummary {
+  id: string;
+  name: string;
+  kind: "PDF" | "DOCX" | "Excel";
+  sizeBytes: number;
+  textCharacters: number;
+  chunkCount: number;
+  pageCount?: number | null;
+  sheets: SpreadsheetSheetSummary[];
+  warnings: string[];
+}
+
 export interface ChatMetrics {
   wallMs: number;
   totalMs: number | null;

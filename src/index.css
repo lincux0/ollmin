@@ -94,8 +94,20 @@ select:focus, textarea:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba
 .composer { flex: 0 0 auto; margin-top: 10px; padding: 10px 12px 9px; border: 1px solid #dcd4ca; border-radius: 16px; background: #fffdfa; box-shadow: 0 2px 10px rgba(69, 52, 40, 0.04); }
 .composer textarea { min-height: 64px; max-height: 180px; padding: 4px 2px 8px; resize: vertical; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; }
 .composer textarea:focus { border: 0; box-shadow: none; }
+.composer-attachments { display: grid; gap: 6px; margin: 0 0 9px; }
+.attachment-chip { display: flex; align-items: center; justify-content: space-between; gap: 9px; min-width: 0; padding: 7px 8px 7px 10px; border: 1px solid #e5d8cb; border-radius: 9px; background: #f8f2ed; }
+.attachment-chip-copy { min-width: 0; }
+.attachment-chip strong, .attachment-chip small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip strong { color: #655247; font-size: 10px; }
+.attachment-chip small, .composer-attachments > p { color: #91877d; font-size: 9px; }
+.attachment-chip small { margin-top: 2px; }
+.attachment-chip button { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #9d725f; font-size: 17px; line-height: 1; }
+.attachment-chip button:hover:not(:disabled) { background: #efe0d5; color: #a45e47; }
+.composer-attachments > p { margin: 0; line-height: 1.4; }
 .composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
 .composer-selection { display: inline-flex; align-items: center; min-width: 0; max-width: 70%; color: #70665d; }
+.composer-file-button { height: 30px; padding: 0 4px; border: 0; border-radius: 7px; background: transparent; color: #a45e47; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.composer-file-button:hover:not(:disabled) { background: #f1e7de; }
 .composer-select { width: auto; min-width: 0; height: 30px; padding: 0 0 0 4px; border: 0; border-radius: 7px; background: transparent; color: #574e47; font-size: 11px; font-weight: 700; outline: none; appearance: auto; }
 .composer-select:focus { border: 0; box-shadow: none; background: transparent; }
 .composer-select:disabled { color: #a59b91; }
@@ -213,6 +225,12 @@ input:focus { border-color: #d97757; box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.
 [data-theme="dark"] .hint, [data-theme="dark"] .sidebar-foot, [data-theme="dark"] .session-empty, [data-theme="dark"] .settings-note { color: #aaa096; }
 [data-theme="dark"] .conversation-header, [data-theme="dark"] .metrics-strip, [data-theme="dark"] .settings-export, [data-theme="dark"] .settings-danger { border-color: #403a33; }
 [data-theme="dark"] .context-size, [data-theme="dark"] .compact-metrics span { border-color: #4a433a; background: #302b26; color: #c8a08d; }
+[data-theme="dark"] .attachment-chip { border-color: #4a433a; background: #302b26; }
+[data-theme="dark"] .attachment-chip strong { color: #e0d4c8; }
+[data-theme="dark"] .attachment-chip small, [data-theme="dark"] .composer-attachments > p { color: #aaa096; }
+[data-theme="dark"] .attachment-chip button { color: #c69b86; }
+[data-theme="dark"] .attachment-chip button:hover:not(:disabled), [data-theme="dark"] .composer-file-button:hover:not(:disabled) { background: #40332b; }
+[data-theme="dark"] .composer-file-button { color: #d5a38b; }
 [data-theme="dark"] select, [data-theme="dark"] textarea, [data-theme="dark"] input { border-color: #4a433a; background: #2a2723; color: #eee9e1; }
 [data-theme="dark"] .composer-select { border: 0; background: transparent; color: #d6c9bd; }
 [data-theme="dark"] .composer-select:focus { border: 0; background: transparent; }

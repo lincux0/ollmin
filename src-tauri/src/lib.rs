@@ -9,6 +9,7 @@ use storage::{AppSettings, ConversationDetail, ConversationSummary, ExportPayloa
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 
+mod attachments;
 mod storage;
 
 const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
@@ -864,6 +865,15 @@ async fn get_models(state: State<'_, ChatState>) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn parse_local_attachments(
+    paths: Vec<String>,
+) -> Result<Vec<attachments::AttachmentSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || attachments::parse_paths(paths))
+        .await
+        .map_err(|error| format!("本地文件解析任务异常结束：{error}"))?
+}
+
+#[tauri::command]
 async fn get_loaded_models(state: State<'_, ChatState>) -> Result<Value, String> {
     request_json(&state.client, Method::GET, "/api/ps", None).await
 }
@@ -1135,6 +1145,7 @@ fn export_conversation(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(ChatState::default())
         .setup(|app| {
             let app_data_dir = app
@@ -1152,6 +1163,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_service_status,
             get_models,
+            parse_local_attachments,
             get_loaded_models,
             warm_model,
             diagnose_chat,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AttachmentSummary,
   AppSettings,
   ChatResponse,
   ChatStreamPayload,
@@ -28,6 +29,10 @@ export function getServiceStatus(): Promise<ServiceStatus> {
 
 export function getModels(): Promise<ModelListResponse> {
   return invoke<ModelListResponse>("get_models");
+}
+
+export function parseLocalAttachments(paths: string[]): Promise<AttachmentSummary[]> {
+  return invoke<AttachmentSummary[]>("parse_local_attachments", { paths });
 }
 
 export function getLoadedModels(): Promise<LoadedModelResponse> {

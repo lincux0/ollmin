@@ -23,3 +23,8 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["macros", "sync", "time"] }
 tokio-util = "0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
+tauri-plugin-dialog = "2.7.2"
+calamine = "0.36.1"
+lopdf = { version = "0.44.0", default-features = false }
+quick-xml = "0.42.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

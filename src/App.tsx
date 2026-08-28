@@ -1,6 +1,7 @@
 import { Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ProfilerOnRenderCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./index.css";
 import {
   clearConversations,
@@ -12,6 +13,7 @@ import {
   getServiceStatus,
   getSettings,
   listConversations,
+  parseLocalAttachments,
   renameConversation,
   saveMessage,
   startChat,
@@ -39,6 +41,7 @@ import {
 } from "./lib/performance";
 import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
 import type {
+  AttachmentSummary,
   AppSettings,
   ChatMessage,
   ChatMetrics,
@@ -102,6 +105,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   outputTokenLimit: DEFAULT_OUTPUT_TOKEN_LIMIT,
   reasoningTokenLimit: DEFAULT_REASONING_TOKEN_LIMIT,
 };
+
+const MAX_COMPOSER_ATTACHMENTS = 3;
 
 function modelName(model: OllamaModel): string {
   return model.name ?? model.model ?? "未知模型";
@@ -170,6 +175,17 @@ function displayTime(value: string): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function attachmentDetail(attachment: AttachmentSummary): string {
+  if (attachment.kind === "PDF") {
+    return `${attachment.pageCount ?? 0} 页 · ${attachment.chunkCount} 个片段`;
+  }
+  if (attachment.kind === "DOCX") {
+    return `${attachment.chunkCount} 个片段`;
+  }
+  const rows = attachment.sheets.reduce((total, sheet) => total + sheet.rows, 0);
+  return `${attachment.sheets.length} 个工作表 · ${rows} 行`;
+}
+
 function downloadExport(payload: ExportPayload) {
   const blob = new Blob([payload.content], { type: payload.format === "json" ? "application/json" : "text/markdown" });
   const url = URL.createObjectURL(blob);
@@ -206,6 +222,8 @@ export default function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [modelAliasesExpanded, setModelAliasesExpanded] = useState(false);
   const [exportExpanded, setExportExpanded] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentSummary[]>([]);
+  const [parsingAttachments, setParsingAttachments] = useState(false);
   const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
@@ -710,6 +728,42 @@ export default function App() {
     }
   }
 
+  async function addLocalAttachments() {
+    if (busy || warming || loadingConversation || parsingAttachments) return;
+    const remaining = MAX_COMPOSER_ATTACHMENTS - attachments.length;
+    if (remaining <= 0) {
+      setError(`一次最多保留 ${MAX_COMPOSER_ATTACHMENTS} 个已解析文件，请先移除不需要的文件。`);
+      return;
+    }
+    try {
+      const selected = await open({
+        title: "添加本地文件",
+        multiple: true,
+        directory: false,
+        filters: [{ name: "支持的文件", extensions: ["pdf", "docx", "xls", "xlsx"] }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length > remaining) {
+        setError(`还可添加 ${remaining} 个文件，请分批选择或先移除已有文件。`);
+        return;
+      }
+      setParsingAttachments(true);
+      setError(null);
+      const parsed = await parseLocalAttachments(paths);
+      setAttachments((current) => [...current, ...parsed]);
+    } catch (attachmentError) {
+      setError(errorText(attachmentError));
+    } finally {
+      setParsingAttachments(false);
+    }
+  }
+
+  function removeLocalAttachment(id: string) {
+    if (parsingAttachments) return;
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
   async function cancelMessage() {
     const requestId = activeRequestId.current;
     if (!requestId) return;
@@ -936,9 +990,23 @@ export default function App() {
         {lastMetrics ? <div className="metrics-strip"><span>加载 {formatMetric(lastMetrics.loadMs, 0)} ms</span><span>提示词 {lastMetrics.promptTokens ?? "—"} token · {formatMetric(lastMetrics.promptMs, 0)} ms</span><span>输出 {lastMetrics.outputTokens ?? "—"} token · 思考字符 {lastMetrics.thinkingCharacters}</span>{lastMetrics.stopReason === "length" ? <span className="metrics-warning" title="Ollama 因达到 num_predict 上限结束生成">已达到输出上限</span> : null}</div> : null}
 
         <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
+          {attachments.length > 0 ? <div className="composer-attachments" aria-label="已解析附件">
+            {attachments.map((attachment) => (
+              <div className="attachment-chip" key={attachment.id} title={attachment.warnings.join("\n") || attachment.name}>
+                <div className="attachment-chip-copy">
+                  <strong>{attachment.kind} · {attachment.name}</strong>
+                  <small>{attachmentDetail(attachment)} · 已本地解析</small>
+                </div>
+                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => removeLocalAttachment(attachment.id)} disabled={parsingAttachments}>×</button>
+              </div>
+            ))}
+            <p>附件内容尚未发送给模型；将在后续“上下文注入”阶段接入对话。</p>
+          </div> : null}
           <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
           <div className="composer-toolbar">
             <div className="composer-selection" aria-label="模型与性能模式">
+              <button type="button" className="composer-file-button" onClick={() => void addLocalAttachments()} disabled={busy || warming || loadingConversation || parsingAttachments}>{parsingAttachments ? "解析中…" : "+ 文件"}</button>
+              <span className="composer-selection-divider" aria-hidden="true">·</span>
               <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
                 {models.length === 0 ? <option value="">没有检测到模型</option> : null}
                 {models.map((model) => {
