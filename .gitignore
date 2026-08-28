@@ -24,3 +24,8 @@ AGENTS.md
 docs/
 benchmarks/
 RELEASE_NOTES.md
+
+# 本地样例、GitHub 规则集导出与 Windows 快捷方式
+examples/
+.github/ruleset-main-review.json
+src-tauri.lnk
