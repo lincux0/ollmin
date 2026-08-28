@@ -39,6 +39,7 @@ The application does not upload prompts, responses, conversations, or hardware d
 - Separate thinking and answer rendering, stop generation, copy, and automatic scrolling while output grows;
 - Basic Markdown rendering for headings, emphasis, strikethrough, lists, blockquotes, and separators;
 - SQLite local conversations with search, rename, restore, delete, and Markdown/JSON export;
+- Local file attachments for PDF, DOCX, XLS, and XLSX: text and spreadsheet values are parsed without a model, then bounded relevant excerpts are supplied to the current request;
 - Default model and per-model aliases for new conversations;
 - Load, prompt, output-token, tok/s, thinking-character, and stop-reason metrics;
 - Batched stream events, coalesced frontend updates, debug diagnostics, and a custom borderless title bar.
@@ -89,6 +90,15 @@ Running only `npm run dev` or `npm run preview` is useful for checking frontend 
 
 These are request settings sent to Ollama, not guarantees about the model's raw inference speed. Quantization, processor, memory bandwidth, whether the model is already loaded, and context length all affect the final tok/s.
 
+## Local file attachments
+
+Use **+ File** in the composer to attach up to three local PDF, DOCX, XLS, or XLSX files. Ollmin parses supported files locally: PDF/DOCX are split into text excerpts, while Excel is represented as worksheet headers and non-empty rows. When you send a question, the client selects bounded excerpts relevant to that question instead of placing a whole file into the prompt.
+
+- Attachment context is capped at roughly 3K / 6K / 9K characters for 4K / 8K / 16K contexts;
+- The original file is never uploaded or copied into the application data directory;
+- Scanned/image-only PDFs are not OCR'd, and legacy `.doc` files must be saved as `.docx` first;
+- Attached excerpts remain active in the current conversation until you remove them.
+
 ## How it works
 
 ```text
@@ -97,6 +107,7 @@ React UI
   ▼
 Rust backend
   ├─ Connects to local Ollama
+  ├─ Parses selected local files and selects bounded reference excerpts
   ├─ Parses NDJSON and separates thinking/answer content
   ├─ Schedules, cancels, and diagnoses one request at a time
   └─ Reads and writes local SQLite
@@ -139,6 +150,7 @@ The installer bundle remains disabled by default. Building an MSI/NSIS installer
 
 - SQLite database: `%APPDATA%\com.ollmin.desktop\ollmin.sqlite3`;
 - Conversations, messages, and settings stay on the local machine by default;
+- To restore attachments after reopening a conversation, parsed attachment excerpts and metadata are stored as plaintext in the same local SQLite database; original source files and source paths are not stored;
 - Thinking content is not saved unless enabled in Settings, and only affects newly saved messages;
 - Exports are always triggered explicitly by the user;
 - No telemetry, account system, cloud synchronization, or background model requests;
@@ -164,6 +176,10 @@ The Debug build keeps a console window so Rust logs remain visible during develo
 
 Balanced and Reasoning allow thinking, while Reasoning also uses a larger context and output budget. Use the load, prompt, and generation metrics in the interface to identify the bottleneck instead of judging by one response's total time alone.
 
+### Which files can I attach?
+
+PDF, DOCX, XLS, and XLSX are supported. Up to three local files, each no larger than 20 MiB, can be attached at once. PDFs with no text layer need OCR before they can be useful to the model; old Word `.doc` files are intentionally rejected because the first release only parses DOCX.
+
 ## Contributing and security
 
 - [Contributing guide](CONTRIBUTING.md)
@@ -173,7 +189,7 @@ Balanced and Reasoning allow thinking, while Reasoning also uses a larger contex
 
 ## Current status and boundaries
 
-Ollmin is currently at `1.0.0`. The usable chat loop, local conversations, performance modes, frontend pipeline optimizations, and Debug/Release build verification are in place. Full desktop Playwright E2E coverage, installer signing, automatic updates, and cross-device features are not part of the current release.
+Ollmin is currently at `1.0.0`. The usable chat loop, local conversations, performance modes, local file attachments, frontend pipeline optimizations, and Debug/Release build verification are in place. Full desktop Playwright E2E coverage, installer signing, automatic updates, and cross-device features are not part of the current release.
 
 Issues and improvements around local Ollama, low-end device performance, streaming UX, and local privacy are welcome. New features should first be evaluated for token, memory, permission, and request-count costs.
 
