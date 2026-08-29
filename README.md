@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.0.0-2d7d68?style=flat-square" alt="release v1.0.0">
+  <img src="https://img.shields.io/badge/release-v1.1.0-2d7d68?style=flat-square" alt="release v1.1.0">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&amp;logo=windows&amp;logoColor=white" alt="Windows 10/11">
   <img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&amp;logo=tauri&amp;logoColor=white" alt="Tauri 2">
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&amp;logo=react&amp;logoColor=20232A" alt="React 19">
@@ -142,7 +142,7 @@ The current `tauri.conf.json` does not enable the installer bundle, so the repos
 
 ## Release process
 
-Before a release, make sure the versions in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` match. Run the tests, frontend build, and Rust checks. After the `main` checks pass in GitHub Actions, the maintainer can create a version tag such as `v1.0.0` and attach release notes plus the Windows Release executable or installer to a GitHub Release.
+Before a release, make sure the versions in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` match. Run the tests, frontend build, and Rust checks. After the `main` checks pass in GitHub Actions, the maintainer can create a version tag such as `v1.1.0` and attach release notes plus the Windows Release executable or installer to a GitHub Release.
 
 The installer bundle remains disabled by default. Building an MSI/NSIS installer is a separate release step and must be explicitly enabled and verified; it is not produced by ordinary Debug/Release verification.
 
@@ -189,7 +189,7 @@ PDF, DOCX, XLS, and XLSX are supported. Up to three local files, each no larger 
 
 ## Current status and boundaries
 
-Ollmin is currently at `1.0.0`. The usable chat loop, local conversations, performance modes, local file attachments, frontend pipeline optimizations, and Debug/Release build verification are in place. Full desktop Playwright E2E coverage, installer signing, automatic updates, and cross-device features are not part of the current release.
+Ollmin is currently at `1.1.0`. The usable chat loop, local conversations, performance modes, local file attachments, frontend pipeline optimizations, and Debug/Release build verification are in place. Full desktop Playwright E2E coverage, installer signing, automatic updates, and cross-device features are not part of the current release.
 
 Issues and improvements around local Ollama, low-end device performance, streaming UX, and local privacy are welcome. New features should first be evaluated for token, memory, permission, and request-count costs.
 

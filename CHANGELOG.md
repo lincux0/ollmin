@@ -4,6 +4,15 @@
 
 # Changelog
 
+## 1.1.0 — 2026-08-29
+
+### Changed
+
+- File attachments now appear on the sent user message instead of remaining above the composer;
+- Attachment metadata is persisted with its message and restored when a local conversation is reopened;
+- Later messages no longer resend attachments selected for an earlier message automatically;
+- Added the Windows NSIS setup package for this release.
+
 ## 1.0.0 — 2026-08-27
 
 First stable release. It provides a Windows Release executable and a separately generated NSIS installer workflow. The feature set and privacy boundary continue from 0.2.0; see the historical notes below.

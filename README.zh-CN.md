@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.0.0-2d7d68?style=flat-square" alt="release v1.0.0">
+  <img src="https://img.shields.io/badge/release-v1.1.0-2d7d68?style=flat-square" alt="release v1.1.0">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&amp;logo=windows&amp;logoColor=white" alt="Windows 10/11">
   <img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&amp;logo=tauri&amp;logoColor=white" alt="Tauri 2">
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&amp;logo=react&amp;logoColor=20232A" alt="React 19">
@@ -144,7 +144,7 @@ npm run tauri -- build
 
 ## 发布方式
 
-每次发布前先确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本一致，然后执行测试、前端构建和 Rust 检查。通过 GitHub Actions 的 `main` 分支检查后，维护者可以创建版本标签（例如 `v1.0.0`），并在 GitHub Release 中附上对应的 Release notes 和 Windows Release 可执行文件或安装包。
+每次发布前先确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本一致，然后执行测试、前端构建和 Rust 检查。通过 GitHub Actions 的 `main` 分支检查后，维护者可以创建版本标签（例如 `v1.1.0`），并在 GitHub Release 中附上对应的 Release notes 和 Windows Release 可执行文件或安装包。
 
 当前 installer bundle 保持关闭，生成 MSI/NSIS 安装包属于单独的发行步骤，不会随普通 Debug/Release 验证自动产生；需要安装包时再显式启用并验证对应的 Tauri bundle 配置。
 
@@ -191,7 +191,7 @@ Invoke-RestMethod http://127.0.0.1:11434/api/version
 
 ## 当前状态与边界
 
-Ollmin 当前版本为 `1.0.0`，已完成可用聊天闭环、本地会话、性能档位、本地文件附件、前端链路优化和 Debug/Release 构建验证。完整的桌面 Playwright E2E、安装包签名、自动更新和跨设备能力尚未纳入当前版本。
+Ollmin 当前版本为 `1.1.0`，已完成可用聊天闭环、本地会话、性能档位、本地文件附件、前端链路优化和 Debug/Release 构建验证。完整的桌面 Playwright E2E、安装包签名、自动更新和跨设备能力尚未纳入当前版本。
 
 欢迎围绕本机 Ollama、低配设备性能、流式体验和本地隐私边界提交问题或改进建议。新增功能应先评估 token、内存、权限和请求次数成本。
 
