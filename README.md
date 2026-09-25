@@ -4,195 +4,168 @@
 
 <div align="center">
   <h1>Ollmin</h1>
-  <img src="assets/ollmin-logo.svg" alt="Ollmin client icon" width="96">
+  <p><strong>Lightweight local AI for everyday PCs.</strong><br>
+  A fast Ollama desktop client optimized for CPUs, integrated graphics, and small local models.</p>
+  <p>
+    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe"><strong>Download for Windows (v1.1.0)</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/lincux0/ollmin/releases">View all releases</a>
+  </p>
+  <p>Windows 10/11 · Local &amp; private · No account · MIT</p>
 </div>
 
 <p align="center">
-  <em>A lightweight Ollama desktop client for low-end devices and small local models.</em>
+  <img src="assets/ollmin-ui.png" alt="Ollmin chat window with the Fast mode selector and live performance metrics" width="1000">
 </p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/release-v1.1.0-2d7d68?style=flat-square" alt="release v1.1.0">
-  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&amp;logo=windows&amp;logoColor=white" alt="Windows 10/11">
-  <img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&amp;logo=tauri&amp;logoColor=white" alt="Tauri 2">
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&amp;logo=react&amp;logoColor=20232A" alt="React 19">
-  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&amp;logo=typescript&amp;logoColor=white" alt="TypeScript 5">
-  <img src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&amp;logo=rust&amp;logoColor=white" alt="Rust 2021">
-  <img src="https://img.shields.io/badge/SQLite-local-003B57?style=flat-square&amp;logo=sqlite&amp;logoColor=white" alt="SQLite local">
-  <img src="https://img.shields.io/badge/Ollama-local-111111?style=flat-square" alt="Ollama local">
-</p>
+The current screenshot shows the real chat interface, Fast mode selector, and live metrics. Screenshots for comparing all three modes and asking a question about a local file still need to be captured from the running app.
 
-Ollmin is not trying to make a chat client more complex. It aims to make a local Ollama conversation feel as close as possible to `ollama run`: avoid unnecessary context, skip unrelated thinking and background requests by default, keep generation to one request, and expose why you are waiting together with real performance metrics.
+## Why Ollmin?
 
-## What is Ollmin?
-
-Ollmin is a local-first Windows desktop client that connects directly to Ollama running at `127.0.0.1:11434`. It is designed for CPUs, integrated graphics, limited VRAM, or limited system memory, and works well with small models such as Qwen3-4B.
-
-The application does not upload prompts, responses, conversations, or hardware data. It does not provide accounts, cloud APIs, web search, MCP, shell access, file execution, or model tool calls.
+- Lightweight for low-end PCs, CPUs, integrated graphics, and limited memory;
+- Designed for small local models, including 3B and 4B-class models;
+- Fully local: Ollmin connects to Ollama on your own PC and needs no account;
+- Local PDF, DOCX, XLS, and XLSX parsing for file questions;
+- Live load time, prompt/output token counts, and tokens per second (tok/s);
+- A focused Windows desktop app that avoids unnecessary context and background model requests.
 
 ## Features
 
-- Local Ollama connection checks, model listing, model warm-up, and keep-alive;
-- Native `/api/chat` NDJSON streaming chat;
-- Fast, balanced, and reasoning performance modes;
-- Fast mode with thinking disabled, a 4K context, `num_predict=2048`, and complete-turn history trimming;
-- Separate thinking and answer rendering, stop generation, copy, and automatic scrolling while output grows;
-- Basic Markdown rendering for headings, emphasis, strikethrough, lists, blockquotes, and separators;
-- SQLite local conversations with search, rename, restore, delete, and Markdown/JSON export;
-- Local file attachments for PDF, DOCX, XLS, and XLSX: text and spreadsheet values are parsed without a model, then bounded relevant excerpts are supplied to the current request;
-- Default model and per-model aliases for new conversations;
-- Load, prompt, output-token, tok/s, thinking-character, and stop-reason metrics;
-- Batched stream events, coalesced frontend updates, debug diagnostics, and a custom borderless title bar.
+- Fast, Balanced, and Reasoning modes with bounded context and output settings;
+- A single Ollama chat request at a time, with stop controls and separate thinking/answer display;
+- Local conversation history in SQLite, with search, rename, restore, delete, and export;
+- File excerpts selected for the current question instead of sending an entire document;
+- Clear connection, loading, token, and stop-reason information.
 
-## Preview
+Model speed depends on the model, quantization, context, and hardware. The modes configure requests to Ollama; they do not guarantee a particular inference speed.
 
-<p align="center">
-  <img src="assets/ollmin-ui.png" alt="Ollmin local chat interface" width="1000">
-</p>
+## Ollmin and general-purpose AI clients
 
-## Requirements
+| | Ollmin | General-purpose AI clients |
+| --- | --- | --- |
+| Focus | Small local models and everyday PCs | Broader feature sets |
+| Backend | Ollama | Multiple providers, depending on the client |
+| Account | Not required | Varies |
+| Telemetry | None | Varies |
+| File processing | Local parsing for supported formats | Varies |
+| Main goal | Lightweight, predictable local chat | Feature breadth |
 
-- Windows 10/11;
-- Node.js for frontend development and builds;
-- The Rust toolchain and Tauri 2 prerequisites;
-- Ollama installed and running;
-- At least one local model.
 
-For example:
 
-```powershell
-ollama serve
-ollama pull qwen3:4b
-```
+## Quick start for users
 
-If Ollama uses a different model name, select it from the client's model list.
+1. [Download the Windows installer](https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe) and install Ollmin.
+2. Install and start [Ollama](https://ollama.com/), then make sure at least one model is available. For example, run <code>ollama pull qwen3:4b</code>.
+3. Open Ollmin, select the local model and a performance mode, then start a conversation.
 
-## Quick start
-
-```powershell
-git clone https://github.com/lincux0/ollmin.git
-cd ollmin
-npm install
-npm run tauri -- dev
-```
-
-Once the development window opens, choose a model and performance mode on the left, then enter and send a message. The default model in Settings is used for new conversations; saved model aliases are applied immediately to the current interface and later displays.
-
-Running only `npm run dev` or `npm run preview` is useful for checking frontend styles, but a browser does not provide the Tauri `invoke` runtime and cannot replace the desktop client for connecting to Ollama.
+You do not need Node.js, Rust, or Tauri to use the installer. Ollmin connects to Ollama at <code>127.0.0.1:11434</code>.
 
 ## Performance modes
 
-| Mode | Default strategy | Best for |
+| Mode | Ollama request settings | Good for |
 | --- | --- | --- |
-| Fast | `think=false`, 4K context, 2048 output limit, strict complete-turn history trimming | Short questions, translation, rewriting, low-end devices |
-| Balanced | `think=true`, 4K context, 768 output limit | Everyday multi-turn conversations |
-| Reasoning | `think=true`, 8K context, 2048 output limit | Complex analysis and code troubleshooting |
+| Fast | Thinking off, 4K context, up to 2,048 output tokens; trims history by complete turns | Short questions and low-resource PCs |
+| Balanced | Thinking on, 4K context, up to 768 output tokens | Everyday conversations |
+| Reasoning | Thinking on, 8K context, up to 2,048 output tokens | More involved questions |
 
-These are request settings sent to Ollama, not guarantees about the model's raw inference speed. Quantization, processor, memory bandwidth, whether the model is already loaded, and context length all affect the final tok/s.
+These are request settings, not performance promises. Model loading, quantization, processor, memory bandwidth, and prompt length affect generation speed.
 
-## Local file attachments
+## Local file support
 
-Use **+ File** in the composer to attach up to three local PDF, DOCX, XLS, or XLSX files. Ollmin parses supported files locally: PDF/DOCX are split into text excerpts, while Excel is represented as worksheet headers and non-empty rows. When you send a question, the client selects bounded excerpts relevant to that question instead of placing a whole file into the prompt.
+Attach up to three local files at a time, each up to 20 MiB: PDF, DOCX, XLS, or XLSX. Ollmin parses supported text and spreadsheet cell values locally, then includes bounded relevant excerpts in the question sent to your local Ollama service.
 
-- Attachment context is capped at roughly 3K / 6K / 9K characters for 4K / 8K / 16K contexts;
-- The original file is never uploaded or copied into the application data directory;
-- Scanned/image-only PDFs are not OCR'd, and legacy `.doc` files must be saved as `.docx` first;
-- Attached excerpts belong to the user message that sends them; later messages do not resend them automatically.
+- Original files are not uploaded or copied into Ollmin's data directory.
+- Parsed excerpts and attachment metadata are saved in the local conversation database so an attachment can be restored with its conversation.
+- Scanned/image-only PDFs are not OCR'd. Legacy Word <code>.doc</code> files are not supported; save them as DOCX first.
+
+## Benchmark / Performance
+
+No reproducible benchmark results are published yet. Numbers will be added only with the machine, model, and settings recorded. Ollama generation speed and Ollmin UI overhead will be measured and reported separately.
+
+| Measurement | Record |
+| --- | --- |
+| CPU / integrated graphics | |
+| RAM | |
+| Model | |
+| Quantization | |
+| Context | |
+| Prompt tokens | |
+| Output tokens | |
+| Generation speed (Ollama tok/s) | |
+| Ollmin UI overhead and measurement method | |
 
 ## How it works
 
-```text
-React UI
-  │ Tauri invoke / events
-  ▼
-Rust backend
-  ├─ Connects to local Ollama
-  ├─ Parses selected local files and selects bounded reference excerpts
-  ├─ Parses NDJSON and separates thinking/answer content
-  ├─ Schedules, cancels, and diagnoses one request at a time
-  └─ Reads and writes local SQLite
-       │                         │
-       ▼                         ▼
-127.0.0.1:11434              %APPDATA%\com.ollmin.desktop\ollmin.sqlite3
-Ollama /api/*                Local conversations, settings, and exports
-```
+Ollmin parses selected files and stores conversations locally. Chat requests go from the Windows app to the Ollama service on the same PC.
 
-## Build and test
+    Ollmin desktop app
+      ├─ Local file parsing and bounded excerpt selection
+      ├─ Local SQLite conversation history
+      └─ HTTP to 127.0.0.1:11434
+             └─ Ollama and your local model
 
-```powershell
-# Frontend
-npm run test
-npm run build
+## Privacy and local data
 
-# Rust
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo test --manifest-path src-tauri/Cargo.toml
+- Ollmin connects only to <code>127.0.0.1:11434</code>; prompts and responses are not sent to a cloud service by Ollmin.
+- No account, telemetry, cloud sync, or background model requests.
+- Conversations and settings are stored at <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>.
+- Parsed attachment excerpts and metadata are stored as plaintext in that local database; original files and source paths are not stored.
+- Thinking content is not saved unless you enable it in Settings. Exports happen only when you request them.
 
-# Desktop application
-npm run tauri -- build --debug
-npm run tauri -- build
-```
+## Build from source
 
-Build outputs:
+For development, use Windows 10/11, Node.js 20+, the Rust stable toolchain, Tauri 2 prerequisites, and a running local Ollama service.
 
-- Debug: `src-tauri/target/debug/ollmin.exe` (console retained for debugging);
-- Release: `src-tauri/target/release/ollmin.exe` (Windows console hidden).
+    git clone https://github.com/lincux0/ollmin.git
+    cd ollmin
+    npm ci
+    npm run tauri -- dev
 
-The current `tauri.conf.json` does not enable the installer bundle, so the repository's regular build produces executables rather than MSI/NSIS installers.
+Run the checks used by the repository's CI:
 
-## Release process
+    npm run test
+    npm run build
+    cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+    cargo test --manifest-path src-tauri/Cargo.toml
 
-Before a release, make sure the versions in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` match. Run the tests, frontend build, and Rust checks. After the `main` checks pass in GitHub Actions, the maintainer can create a version tag such as `v1.1.0` and attach release notes plus the Windows Release executable or installer to a GitHub Release.
-
-The installer bundle remains disabled by default. Building an MSI/NSIS installer is a separate release step and must be explicitly enabled and verified; it is not produced by ordinary Debug/Release verification.
-
-## Local data and privacy
-
-- SQLite database: `%APPDATA%\com.ollmin.desktop\ollmin.sqlite3`;
-- Conversations, messages, and settings stay on the local machine by default;
-- To restore attachments after reopening a conversation, parsed attachment excerpts and metadata are stored as plaintext in the same local SQLite database; original source files and source paths are not stored;
-- Thinking content is not saved unless enabled in Settings, and only affects newly saved messages;
-- Exports are always triggered explicitly by the user;
-- No telemetry, account system, cloud synchronization, or background model requests;
-- Model output is never executed as HTML, a command, a script, or a tool call.
+The v1.1.0 Windows installer is attached to the [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.0). Source build commands are for developers.
 
 ## FAQ
 
-### Ollama is shown as disconnected
+### Ollama is disconnected
 
-Make sure Ollama is running and check the local endpoint:
+Start Ollama and check its local endpoint:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:11434/api/version
-```
+    Invoke-RestMethod http://127.0.0.1:11434/api/version
 
-The client only connects to `127.0.0.1:11434`; it does not switch to a remote address automatically.
+Ollmin uses this local address and does not switch to a remote server automatically.
 
 ### Why does the Debug build open a terminal?
 
-The Debug build keeps a console window so Rust logs remain visible during development. The Release build hides the Windows console. The client is not launching an additional terminal tool.
+Debug builds keep a console visible for Rust logs. The Release build hides the Windows console.
 
-### Why are Balanced and Reasoning slower than Fast?
+### Where is my local data stored?
 
-Balanced and Reasoning allow thinking, while Reasoning also uses a larger context and output budget. Use the load, prompt, and generation metrics in the interface to identify the bottleneck instead of judging by one response's total time alone.
+The SQLite database is at <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>. Parsed file excerpts and metadata are stored there to restore attachments in saved conversations.
 
-### Which files can I attach?
+### What are the current limitations?
 
-PDF, DOCX, XLS, and XLSX are supported. Up to three local files, each no larger than 20 MiB, can be attached at once. PDFs with no text layer need OCR before they can be useful to the model; old Word `.doc` files are intentionally rejected because the first release only parses DOCX.
+Scanned PDFs need OCR in another app before use, and legacy <code>.doc</code> files must be saved as DOCX. Generation speed depends on the local model and hardware. Ollmin 1.1.0 does not include automatic updates or a full desktop end-to-end test workflow.
 
-## Contributing and security
+## Contributing
 
+Bug reports and focused feature ideas are welcome. If Ollmin fits your workflow, a star helps more people find it:
+
+- [Report a bug](https://github.com/lincux0/ollmin/issues/new?template=bug_report.md)
+- [Request a feature](https://github.com/lincux0/ollmin/issues/new?template=feature_request.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Changelog](CHANGELOG.md)
+- [Pull requests](https://github.com/lincux0/ollmin/pulls)
 
-## Current status and boundaries
+## Current status
 
-Ollmin is currently at `1.1.0`. The usable chat loop, local conversations, performance modes, local file attachments, frontend pipeline optimizations, and Debug/Release build verification are in place. Full desktop Playwright E2E coverage, installer signing, automatic updates, and cross-device features are not part of the current release.
-
-Issues and improvements around local Ollama, low-end device performance, streaming UX, and local privacy are welcome. New features should first be evaluated for token, memory, permission, and request-count costs.
+The latest published release is v1.1.0. Installer signing, automatic updates, and full desktop end-to-end coverage are not included in this release. New features should preserve Ollmin's local-first design and avoid unnecessary model requests or context.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+Ollmin is licensed under the MIT License. See [LICENSE](LICENSE).
