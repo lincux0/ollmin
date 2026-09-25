@@ -18,8 +18,6 @@
   <img src="assets/ollmin-ui.png" alt="Ollmin chat window with the Fast mode selector and live performance metrics" width="1000">
 </p>
 
-The current screenshot shows the real chat interface, Fast mode selector, and live metrics. Screenshots for comparing all three modes and asking a question about a local file still need to be captured from the running app.
-
 ## Why Ollmin?
 
 - Lightweight for low-end PCs, CPUs, integrated graphics, and limited memory;
@@ -80,19 +78,7 @@ Attach up to three local files at a time, each up to 20 MiB: PDF, DOCX, XLS, or 
 
 ## Benchmark / Performance
 
-No reproducible benchmark results are published yet. Numbers will be added only with the machine, model, and settings recorded. Ollama generation speed and Ollmin UI overhead will be measured and reported separately.
-
-| Measurement | Record |
-| --- | --- |
-| CPU / integrated graphics | |
-| RAM | |
-| Model | |
-| Quantization | |
-| Context | |
-| Prompt tokens | |
-| Output tokens | |
-| Generation speed (Ollama tok/s) | |
-| Ollmin UI overhead and measurement method | |
+No reproducible Ollmin benchmark results are published yet. Generation speed varies with model, quantization, context, and hardware; Ollmin UI overhead has not been measured separately.
 
 ## How it works
 
