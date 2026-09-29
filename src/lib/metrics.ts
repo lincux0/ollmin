@@ -1,4 +1,4 @@
-import type { ChatMetrics, ChatResponse } from "../types";
+import type { ChatMetrics, ChatResponse } from "../contracts/ipc";
 
 export function nanosToMs(value: number | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {

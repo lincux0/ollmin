@@ -10,6 +10,12 @@ const SCHEMA_VERSION: i64 = 9;
 const DEFAULT_CONTEXT_SIZE: u32 = 4096;
 const DEFAULT_OUTPUT_TOKEN_LIMIT: u32 = 2048;
 const DEFAULT_REASONING_TOKEN_LIMIT: u32 = 2048;
+const MAX_IDENTIFIER_CHARACTERS: usize = 128;
+const MAX_MESSAGE_CONTENT_CHARACTERS: usize = 64 * 1024;
+const MAX_MESSAGE_THINKING_CHARACTERS: usize = 64 * 1024;
+const MAX_MESSAGE_METRICS_BYTES: usize = 64 * 1024;
+const MAX_SEARCH_CHARACTERS: usize = 256;
+const MAX_MODEL_ALIASES: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -337,7 +343,11 @@ pub fn list_conversations(
     connection: &Connection,
     query: Option<&str>,
 ) -> Result<Vec<ConversationSummary>, String> {
-    let search = format!("%{}%", query.unwrap_or("").trim());
+    let query = query.unwrap_or("").trim();
+    if query.chars().count() > MAX_SEARCH_CHARACTERS {
+        return Err(format!("会话搜索词不能超过 {MAX_SEARCH_CHARACTERS} 个字符"));
+    }
+    let search = format!("%{query}%");
     let mut statement = connection
         .prepare(
             "SELECT c.id, c.title, c.model, c.model_alias, c.mode, c.created_at, c.updated_at,
@@ -386,8 +396,8 @@ fn insert_conversation(
     mode: &str,
     title: Option<&str>,
 ) -> Result<String, String> {
-    let id = required(id, "会话 ID")?;
-    let model = required(model, "模型名称")?;
+    let id = validate_identifier(id, "会话 ID")?;
+    let model = validate_bounded_text(model, "模型名称", MAX_IDENTIFIER_CHARACTERS, true)?;
     let model_alias = normalize_model_alias(model_alias.unwrap_or(""), &model);
     let mode = required(mode, "性能模式")?;
     validate_mode(&mode)?;
@@ -419,7 +429,7 @@ pub fn create_conversation_with_alias(
 }
 
 pub fn get_conversation(connection: &Connection, id: &str) -> Result<ConversationDetail, String> {
-    let id = required(id, "会话 ID")?;
+    let id = validate_identifier(id, "会话 ID")?;
     let conversation = connection
         .query_row(
             "SELECT c.id, c.title, c.model, c.model_alias, c.mode, c.created_at, c.updated_at,
@@ -552,6 +562,19 @@ pub fn save_conversation_attachments(
 ) -> Result<(), String> {
     let conversation_id = required(conversation_id, "会话 ID")?;
     let message_id = required(message_id, "消息 ID")?;
+    if attachments.len() > super::attachments::MAX_ATTACHMENT_COUNT {
+        return Err(format!(
+            "一次最多保存 {} 个附件",
+            super::attachments::MAX_ATTACHMENT_COUNT
+        ));
+    }
+    let mut attachment_ids = std::collections::HashSet::new();
+    for attachment in attachments {
+        let attachment_id = validate_identifier(&attachment.summary.id, "附件 ID")?;
+        if !attachment_ids.insert(attachment_id) {
+            return Err("附件 ID 不能重复".to_string());
+        }
+    }
     let exists: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
@@ -619,7 +642,11 @@ pub fn existing_attachment_ids(
     conversation_id: &str,
     attachment_ids: &[String],
 ) -> Result<Vec<String>, String> {
-    let summaries = list_conversation_attachments(connection, conversation_id)?;
+    let conversation_id = validate_identifier(conversation_id, "会话 ID")?;
+    for attachment_id in attachment_ids {
+        validate_identifier(attachment_id, "附件 ID")?;
+    }
+    let summaries = list_conversation_attachments(connection, &conversation_id)?;
     Ok(attachment_ids
         .iter()
         .filter(|id| {
@@ -636,7 +663,21 @@ pub fn load_attachment_payloads(
     conversation_id: &str,
     attachment_ids: &[String],
 ) -> Result<Vec<ParsedAttachment>, String> {
-    let summaries = list_conversation_attachments(connection, conversation_id)?;
+    let conversation_id = validate_identifier(conversation_id, "会话 ID")?;
+    if attachment_ids.len() > super::attachments::MAX_ATTACHMENT_COUNT {
+        return Err(format!(
+            "一次最多读取 {} 个附件",
+            super::attachments::MAX_ATTACHMENT_COUNT
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for attachment_id in attachment_ids {
+        validate_identifier(attachment_id, "附件 ID")?;
+        if !seen.insert(attachment_id) {
+            return Err("附件 ID 不能重复".to_string());
+        }
+    }
+    let summaries = list_conversation_attachments(connection, &conversation_id)?;
     if attachment_ids
         .iter()
         .any(|id| !summaries.iter().any(|attachment| attachment.id == *id))
@@ -716,51 +757,129 @@ pub fn delete_conversation(connection: &Connection, id: &str) -> Result<(), Stri
 }
 
 fn save_message_inner(connection: &Connection, input: MessageInput) -> Result<(), String> {
-    validate_role(&input.role)?;
-    let status = required(&input.status, "消息状态")?;
-    let content = input.content;
+    let MessageInput {
+        id,
+        conversation_id,
+        role,
+        content,
+        thinking,
+        status,
+        created_at,
+        metrics,
+    } = input;
+    let id = validate_identifier(&id, "消息 ID")?;
+    let conversation_id = validate_identifier(&conversation_id, "会话 ID")?;
+    validate_role(&role)?;
+    let status = validate_status(&status)?;
+    let content =
+        validate_bounded_text(&content, "消息正文", MAX_MESSAGE_CONTENT_CHARACTERS, false)?;
+    let thinking = thinking
+        .map(|value| {
+            validate_bounded_text(
+                &value,
+                "消息思考内容",
+                MAX_MESSAGE_THINKING_CHARACTERS,
+                false,
+            )
+        })
+        .transpose()?;
     let thinking = if setting_bool(connection, "save_thinking")? {
-        input.thinking.filter(|value| !value.is_empty())
+        thinking.filter(|value| !value.is_empty())
     } else {
         None
     };
-    let metrics_json = input
-        .metrics
+    let metrics_json = metrics
         .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|error| format!("序列化消息指标失败：{error}"))?;
-    let sequence: i64 = connection
+        .map(|value| {
+            validate_json_shape(value, 0)?;
+            let serialized = serde_json::to_string(value)
+                .map_err(|error| format!("序列化消息指标失败：{error}"))?;
+            if serialized.len() > MAX_MESSAGE_METRICS_BYTES {
+                return Err(format!(
+                    "消息指标不能超过 {} KiB",
+                    MAX_MESSAGE_METRICS_BYTES / 1024
+                ));
+            }
+            Ok(serialized)
+        })
+        .transpose()?;
+    let created_at = created_at
+        .map(|value| validate_bounded_text(&value, "消息时间", 64, true))
+        .transpose()?
+        .unwrap_or_else(timestamp);
+
+    let conversation_exists: bool = connection
         .query_row(
-            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE conversation_id = ?1",
-            params![input.conversation_id],
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+            params![&conversation_id],
             |row| row.get(0),
         )
-        .map_err(|error| format!("读取消息顺序失败：{error}"))?;
-    let created_at = input.created_at.unwrap_or_else(timestamp);
-    connection
-        .execute(
-            "INSERT INTO messages(id, conversation_id, role, content, thinking, status, created_at, sequence, metrics_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT(id) DO UPDATE SET content = excluded.content,
-               thinking = excluded.thinking, status = excluded.status, metrics_json = excluded.metrics_json",
-            params![
-                input.id,
-                input.conversation_id,
-                input.role,
-                content,
-                thinking,
-                status,
-                created_at,
-                sequence,
-                metrics_json
-            ],
+        .map_err(|error| format!("确认会话归属失败：{error}"))?;
+    if !conversation_exists {
+        return Err("会话不存在，无法保存消息".to_string());
+    }
+
+    let existing: Option<(String, String)> = connection
+        .query_row(
+            "SELECT conversation_id, role FROM messages WHERE id = ?1",
+            params![&id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(|error| format!("保存消息失败：{error}"))?;
+        .optional()
+        .map_err(|error| format!("确认消息归属失败：{error}"))?;
+    if let Some((existing_conversation_id, existing_role)) = existing {
+        if existing_conversation_id != conversation_id {
+            return Err("消息 ID 已属于其他会话，拒绝跨会话更新".to_string());
+        }
+        if existing_role != role {
+            return Err("消息角色不能在更新时改变".to_string());
+        }
+        connection
+            .execute(
+                "UPDATE messages
+                 SET content = ?1, thinking = ?2, status = ?3, metrics_json = ?4
+                 WHERE id = ?5 AND conversation_id = ?6 AND role = ?7",
+                params![
+                    content,
+                    thinking,
+                    status,
+                    metrics_json,
+                    id,
+                    conversation_id,
+                    role
+                ],
+            )
+            .map_err(|error| format!("更新消息失败：{error}"))?;
+    } else {
+        let sequence: i64 = connection
+            .query_row(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM messages WHERE conversation_id = ?1",
+                params![&conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("读取消息顺序失败：{error}"))?;
+        connection
+            .execute(
+                "INSERT INTO messages(id, conversation_id, role, content, thinking, status, created_at, sequence, metrics_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    id,
+                    conversation_id,
+                    role,
+                    content,
+                    thinking,
+                    status,
+                    created_at,
+                    sequence,
+                    metrics_json
+                ],
+            )
+            .map_err(|error| format!("保存消息失败：{error}"))?;
+    }
     connection
         .execute(
             "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
-            params![timestamp(), input.conversation_id],
+            params![timestamp(), conversation_id],
         )
         .map_err(|error| format!("更新会话时间失败：{error}"))?;
     Ok(())
@@ -877,18 +996,27 @@ pub fn update_settings(
         return Err("不支持的推理输出 token 上限，可选 2K、4K、8K 或不限".to_string());
     }
     settings.default_model = settings.default_model.trim().to_string();
-    settings.model_aliases = settings
-        .model_aliases
-        .into_iter()
-        .filter_map(|(model, alias)| {
-            let model = model.trim().to_string();
-            if model.is_empty() {
-                return None;
-            }
-            let alias = alias.trim().chars().take(80).collect();
-            Some((model, alias))
-        })
-        .collect();
+    if settings.default_model.chars().count() > MAX_IDENTIFIER_CHARACTERS
+        || settings.default_model.contains('\0')
+    {
+        return Err(format!(
+            "默认模型名称不能超过 {MAX_IDENTIFIER_CHARACTERS} 个字符且不能包含空字符"
+        ));
+    }
+    if settings.model_aliases.len() > MAX_MODEL_ALIASES {
+        return Err(format!("模型别名数量不能超过 {MAX_MODEL_ALIASES}"));
+    }
+    let mut aliases = BTreeMap::new();
+    for (model, alias) in settings.model_aliases {
+        let model = model.trim();
+        if model.is_empty() {
+            continue;
+        }
+        let model = validate_bounded_text(model, "模型别名键", MAX_IDENTIFIER_CHARACTERS, true)?;
+        let alias = validate_bounded_text(&alias, "模型别名", 80, false)?;
+        aliases.insert(model, alias.trim().to_string());
+    }
+    settings.model_aliases = aliases;
     let model_aliases = serde_json::to_string(&settings.model_aliases)
         .map_err(|error| format!("序列化模型别名失败：{error}"))?;
     for (key, value) in [
@@ -999,13 +1127,88 @@ fn setting_bool(connection: &Connection, key: &str) -> Result<bool, String> {
     Ok(value.as_deref() == Some("true"))
 }
 
-fn required(value: &str, label: &str) -> Result<String, String> {
+fn validate_identifier(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
-        Err(format!("{label}不能为空"))
-    } else {
-        Ok(value.to_string())
+        return Err(format!("{label}不能为空"));
     }
+    if value.chars().count() > MAX_IDENTIFIER_CHARACTERS {
+        return Err(format!(
+            "{label}不能超过 {MAX_IDENTIFIER_CHARACTERS} 个字符"
+        ));
+    }
+    if value
+        .chars()
+        .any(|character| character == '\0' || character.is_control())
+    {
+        return Err(format!("{label}包含不支持的控制字符"));
+    }
+    Ok(value.to_string())
+}
+
+fn validate_bounded_text(
+    value: &str,
+    label: &str,
+    maximum: usize,
+    required: bool,
+) -> Result<String, String> {
+    if required && value.trim().is_empty() {
+        return Err(format!("{label}不能为空"));
+    }
+    if value.chars().count() > maximum {
+        return Err(format!("{label}不能超过 {maximum} 个字符"));
+    }
+    if value.contains('\0') {
+        return Err(format!("{label}包含不支持的空字符"));
+    }
+    Ok(value.to_string())
+}
+
+fn required(value: &str, label: &str) -> Result<String, String> {
+    validate_identifier(value, label)
+}
+
+fn validate_status(status: &str) -> Result<String, String> {
+    let status = validate_identifier(status, "消息状态")?;
+    if matches!(
+        status.as_str(),
+        "streaming" | "done" | "cancelled" | "error"
+    ) {
+        Ok(status)
+    } else {
+        Err("不支持的消息状态".to_string())
+    }
+}
+
+fn validate_json_shape(value: &Value, depth: usize) -> Result<(), String> {
+    const MAX_JSON_DEPTH: usize = 8;
+    const MAX_JSON_ITEMS: usize = 64;
+    if depth > MAX_JSON_DEPTH {
+        return Err("消息指标 JSON 嵌套层级过深".to_string());
+    }
+    match value {
+        Value::Array(items) => {
+            if items.len() > MAX_JSON_ITEMS {
+                return Err("消息指标 JSON 数组过大".to_string());
+            }
+            for item in items {
+                validate_json_shape(item, depth + 1)?;
+            }
+        }
+        Value::Object(items) => {
+            if items.len() > MAX_JSON_ITEMS {
+                return Err("消息指标 JSON 对象过大".to_string());
+            }
+            for (key, item) in items {
+                if key.chars().count() > MAX_IDENTIFIER_CHARACTERS {
+                    return Err("消息指标 JSON 键过长".to_string());
+                }
+                validate_json_shape(item, depth + 1)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn validate_role(role: &str) -> Result<(), String> {
@@ -1270,6 +1473,117 @@ mod tests {
             })
             .expect("attachment count");
         assert_eq!(attachment_count, 0);
+    }
+
+    #[test]
+    fn message_id_cannot_update_a_message_in_another_conversation() {
+        let connection = database();
+        create_conversation_with_alias(
+            &connection,
+            "conversation-a",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create first conversation");
+        create_conversation_with_alias(
+            &connection,
+            "conversation-b",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create second conversation");
+        save_message(
+            &connection,
+            MessageInput {
+                id: "message-shared".to_string(),
+                conversation_id: "conversation-a".to_string(),
+                role: "assistant".to_string(),
+                content: "original".to_string(),
+                thinking: None,
+                status: "done".to_string(),
+                created_at: Some("created-a".to_string()),
+                metrics: None,
+            },
+        )
+        .expect("save original");
+
+        let error = save_message(
+            &connection,
+            MessageInput {
+                id: "message-shared".to_string(),
+                conversation_id: "conversation-b".to_string(),
+                role: "assistant".to_string(),
+                content: "attacker update".to_string(),
+                thinking: None,
+                status: "error".to_string(),
+                created_at: Some("created-b".to_string()),
+                metrics: Some(serde_json::json!({"unexpected": true})),
+            },
+        )
+        .expect_err("cross-conversation update must fail");
+        assert!(error.contains("其他会话"));
+
+        let detail = get_conversation(&connection, "conversation-a").expect("read original");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.messages[0].content, "original");
+        assert_eq!(detail.messages[0].created_at, "created-a");
+        assert_eq!(detail.messages[0].status, "done");
+        assert!(get_conversation(&connection, "conversation-b")
+            .expect("read second conversation")
+            .messages
+            .is_empty());
+    }
+
+    #[test]
+    fn same_conversation_message_update_preserves_ownership_metadata() {
+        let connection = database();
+        create_conversation_with_alias(
+            &connection,
+            "conversation-update",
+            "qwen3:4b",
+            None,
+            "fast",
+            None,
+        )
+        .expect("create conversation");
+        save_message(
+            &connection,
+            MessageInput {
+                id: "message-update".to_string(),
+                conversation_id: "conversation-update".to_string(),
+                role: "assistant".to_string(),
+                content: "first".to_string(),
+                thinking: None,
+                status: "streaming".to_string(),
+                created_at: Some("created-once".to_string()),
+                metrics: None,
+            },
+        )
+        .expect("save first");
+        save_message(
+            &connection,
+            MessageInput {
+                id: "message-update".to_string(),
+                conversation_id: "conversation-update".to_string(),
+                role: "assistant".to_string(),
+                content: "second".to_string(),
+                thinking: None,
+                status: "done".to_string(),
+                created_at: Some("should-not-replace".to_string()),
+                metrics: None,
+            },
+        )
+        .expect("update same message");
+        let message = &get_conversation(&connection, "conversation-update")
+            .expect("read update")
+            .messages[0];
+        assert_eq!(message.content, "second");
+        assert_eq!(message.created_at, "created-once");
+        assert_eq!(message.status, "done");
     }
 
     #[test]

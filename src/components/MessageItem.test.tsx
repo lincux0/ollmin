@@ -19,7 +19,8 @@ describe("message rendering boundaries", () => {
 
     expect(html).toContain("思考过程");
     expect(html).toContain("生成中");
-    expect(html).toContain("复制");
+    expect(html).toContain('aria-label="复制回复"');
+    expect(html.indexOf('class="message-meta"')).toBeLessThan(html.indexOf('class="message-content"'));
     expect(html).toContain("正文");
 
     const escaped = renderToStaticMarkup(<MarkdownContent content="<script>alert(1)</script>" />);
@@ -67,6 +68,7 @@ describe("message rendering boundaries", () => {
 
     expect(html).toContain("调研方案.pdf");
     expect(html).toContain("已作为本地参考资料发送");
+    expect(html).not.toContain("你");
   });
 
   it("only invalidates a message row when its message or copied state changes", () => {

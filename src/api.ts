@@ -12,7 +12,7 @@ import type {
   ModelListResponse,
   PersistedMessageInput,
   ServiceStatus,
-} from "./types";
+} from "./contracts/ipc";
 import {
   DEFAULT_CONTEXT_SIZE,
   DEFAULT_OUTPUT_TOKEN_LIMIT,
@@ -87,6 +87,10 @@ export function startChat(
 
 export function saveConversationAttachments(conversationId: string, messageId: string, attachmentIds: string[]): Promise<void> {
   return invoke<void>("save_conversation_attachments", { conversationId, messageId, attachmentIds });
+}
+
+export function releaseLocalAttachments(attachmentIds: string[]): Promise<void> {
+  return invoke<void>("release_local_attachments", { attachmentIds });
 }
 
 export function removeConversationAttachment(conversationId: string, attachmentId: string): Promise<void> {

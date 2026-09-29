@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../types";
+import type { ChatMessage } from "../contracts/ipc";
 import { estimateMessageTokens } from "./performance";
 
 export interface TrimmedHistory {

@@ -7,7 +7,7 @@
   <p><strong>让日常 PC 也能轻松运行本地 AI。</strong><br>
   面向 CPU、核显和本地小模型优化的轻量 Ollama 桌面客户端。</p>
   <p>
-    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe"><strong>下载 Windows 安装包（v1.1.0）</strong></a>
+    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe"><strong>下载 Windows 安装包（v1.1.1）</strong></a>
     &nbsp;·&nbsp;
     <a href="https://github.com/lincux0/ollmin/releases">查看全部 Release</a>
   </p>
@@ -15,7 +15,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/ollmin-ui.png" alt="Ollmin 聊天窗口，展示快速模式选择和实时性能指标" width="1000">
+  <img src="assets/ollmin-ui.png" alt="Ollmin 本地聊天窗口与模型控制" width="1000">
 </p>
 
 ## 为什么选择 Ollmin？
@@ -24,7 +24,7 @@
 - 为 3B、4B 等本地小模型设计；
 - 完全本地：Ollmin 连接本机 Ollama，无需账号；
 - 支持本地解析 PDF、DOCX、XLS 和 XLSX 文件并用于问答；
-- 展示加载时间、提示词/输出 token 数和每秒 token 数（tok/s）；
+- 简要显示每轮生成速度与耗时；
 - 专注 Windows 桌面体验，尽量减少无关上下文和后台模型请求。
 
 模型速度取决于模型、量化方式、上下文和硬件。性能模式会配置 Ollama 请求，但不保证特定推理速度。
@@ -35,7 +35,7 @@
 - 单次只运行一个 Ollama 聊天请求，可停止生成，思考与正文分开展示；
 - 使用 SQLite 保存本机会话，支持搜索、重命名、恢复、删除和导出；
 - 根据当前问题选择文件片段，不会把整份文档发送给模型；
-- 清楚展示连接状态、加载、token 和停止原因。
+- 清楚展示连接状态与请求状态，并支持停止生成。
 
 ## Ollmin 与通用 AI 客户端
 
@@ -52,7 +52,7 @@
 
 ## 用户快速开始
 
-1. [下载 Windows 安装包](https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe)并安装 Ollmin。
+1. [下载 Windows 安装包](https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe)并安装 Ollmin。
 2. 安装并启动 [Ollama](https://ollama.com/)，确认至少有一个本地模型。例如运行 <code>ollama pull qwen3:4b</code>。
 3. 打开 Ollmin，选择本地模型和性能模式，然后开始对话。
 
@@ -114,7 +114,7 @@ Ollmin 在本机解析所选文件，并在本地保存会话。聊天请求从 
     cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     cargo test --manifest-path src-tauri/Cargo.toml
 
-v1.1.0 Windows 安装包可在 [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.0) 下载。源码构建命令面向开发者。
+v1.1.1 Windows 安装包可在 [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.1) 下载。源码构建命令面向开发者。
 
 ## 常见问题
 
@@ -136,7 +136,7 @@ SQLite 数据库位于 <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>�
 
 ### 当前有哪些限制？
 
-扫描件 PDF 需要先在其他软件中做 OCR，旧版 <code>.doc</code> 需要先另存为 DOCX。生成速度取决于本地模型与硬件。Ollmin 1.1.0 尚未提供自动更新和完整的桌面端到端测试流程。
+扫描件 PDF 需要先在其他软件中做 OCR，旧版 <code>.doc</code> 需要先另存为 DOCX。生成速度取决于本地模型与硬件。Ollmin 1.1.1 尚未提供自动更新和完整的桌面端到端测试流程。
 
 ## 参与贡献
 
@@ -150,7 +150,7 @@ SQLite 数据库位于 <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>�
 
 ## 当前状态
 
-最新发布版本为 v1.1.0。此版本未提供安装包签名、自动更新或完整桌面端到端覆盖。新增功能应继续遵循本地优先原则，并避免不必要的模型请求和上下文。
+最新发布版本为 v1.1.1。此版本未提供安装包签名、自动更新或完整桌面端到端覆盖。新增功能应继续遵循本地优先原则，并避免不必要的模型请求和上下文。
 
 ## 许可证
 

@@ -4,6 +4,18 @@
 
 # Changelog
 
+## 1.1.1 — 2026-09-29
+
+### Changed
+
+- Refined the chat layout, compacted composer controls, and simplified user messages;
+- Moved the assistant copy control beside the model label and reduced the on-screen metrics to a brief speed/time summary.
+
+### Fixed
+
+- Preserved attachment-cache entries when persistence fails and avoided re-locking the cache during release;
+- Kept Ollama traffic on the local endpoint by bypassing proxies and refusing redirects.
+
 ## 1.1.0 — 2026-08-29
 
 ### Changed

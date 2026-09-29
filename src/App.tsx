@@ -14,6 +14,7 @@ import {
   getSettings,
   listConversations,
   parseLocalAttachments,
+  releaseLocalAttachments,
   renameConversation,
   saveConversationAttachments,
   saveMessage,
@@ -23,14 +24,33 @@ import {
   warmModel,
 } from "./api";
 import MessageItem from "./components/MessageItem";
-import { diagnosticsEnabled, installLongTaskObserver, recordDiagnostic, scheduleDiagnosticPaint } from "./lib/diagnostics";
+import StatusPill from "./components/ui/StatusPill";
+import {
+  errorText,
+  fromStoredMessage,
+  newId,
+  responseMetrics,
+  safeMode,
+  toChatMessage,
+} from "./features/chat/helpers";
+import type {
+  AssistantBuffer,
+  AssistantSnapshot,
+  ConversationMessage,
+  MessageStatus,
+  SessionContextMenu,
+} from "./features/chat/types";
+import { attachmentDetail, MAX_COMPOSER_ATTACHMENTS } from "./features/attachments/helpers";
+import { modelAlias, modelAliasFor, modelName } from "./features/models/helpers";
+import { displayTime } from "./features/sessions/helpers";
+import { DEFAULT_SETTINGS } from "./features/settings/defaults";
+import { downloadExport } from "./features/shell/export";
+import { diagnosticsEnabled, installLongTaskObserver, recordDiagnostic, scheduleDiagnosticPaint } from "./features/diagnostics/diagnostics";
 import { trimHistoryForFastMode } from "./lib/history";
-import { deriveChatMetrics, formatMetric } from "./lib/metrics";
+import { formatMetric } from "./lib/metrics";
+import { shouldKeepConversationAfterStartFailure } from "./lib/session";
 import {
   CONTEXT_SIZE_OPTIONS,
-  DEFAULT_CONTEXT_SIZE,
-  DEFAULT_OUTPUT_TOKEN_LIMIT,
-  DEFAULT_REASONING_TOKEN_LIMIT,
   OUTPUT_TOKEN_LIMIT_OPTIONS,
   PERFORMANCE_PROFILES,
   profileForMode,
@@ -46,7 +66,6 @@ import type {
   AppSettings,
   ChatMessage,
   ChatMetrics,
-  ChatResponse,
   ChatDiagnosticPayload,
   ChatStreamPayload,
   ConversationDetail,
@@ -55,150 +74,27 @@ import type {
   OllamaModel,
   PersistedMessageInput,
   ServiceStatus,
-  StoredMessage,
   ThemeMode,
-} from "./types";
+} from "./contracts/ipc";
 
-type MessageStatus = "streaming" | "done" | "cancelled" | "error";
+type IconName = "plus" | "minimize" | "maximize" | "close" | "sparkle" | "send" | "chevron";
 
-interface ConversationMessage extends ChatMessage {
-  id: string;
-  status: MessageStatus;
-  error?: string;
-  createdAt?: string;
-  metrics?: ChatMetrics | null;
-  modelAlias?: string;
-  attachments?: AttachmentSummary[];
-}
-
-interface AssistantBuffer {
-  requestId: string;
-  conversationId: string;
-  id: string;
-  content: string;
-  thinking: string;
-  metrics: ChatMetrics | null;
-}
-
-interface AssistantSnapshot {
-  requestId: string;
-  id: string;
-  content: string;
-  thinking: string;
-  metrics: ChatMetrics | null;
-  status: MessageStatus;
-  error?: string;
-  terminal: boolean;
-}
-
-interface SessionContextMenu {
-  conversation: ConversationSummary;
-  x: number;
-  y: number;
-}
-
-const DEFAULT_SETTINGS: AppSettings = {
-  theme: "system",
-  saveThinking: false,
-  defaultMode: "fast",
-  defaultModel: "",
-  modelAliases: {},
-  contextSize: DEFAULT_CONTEXT_SIZE,
-  outputTokenLimit: DEFAULT_OUTPUT_TOKEN_LIMIT,
-  reasoningTokenLimit: DEFAULT_REASONING_TOKEN_LIMIT,
+const ICON_PATHS: Record<IconName, string> = {
+  plus: "M12 5v14M5 12h14",
+  minimize: "M5 12h14",
+  maximize: "M6 6h12v12H6z",
+  close: "M6 6l12 12M18 6 6 18",
+  sparkle: "M12 3.5l1.9 5.8L20 11l-6.1 1.7L12 19l-1.9-6.3L4 11l6.1-1.7L12 3.5z",
+  send: "M12 19V5m-6 6 6-6 6 6",
+  chevron: "m7 10 5 5 5-5",
 };
 
-const MAX_COMPOSER_ATTACHMENTS = 3;
-
-function modelName(model: OllamaModel): string {
-  return model.name ?? model.model ?? "未知模型";
-}
-
-function modelAlias(alias: string | undefined, model: string): string {
-  return alias?.trim() || model;
-}
-
-function modelAliasFor(
-  aliases: Record<string, string> | undefined,
-  model: string,
-  fallback?: string,
-): string {
-  if (aliases && Object.prototype.hasOwnProperty.call(aliases, model)) {
-    return modelAlias(aliases[model], model);
-  }
-  return modelAlias(fallback, model);
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function newId(prefix: string): string {
-  const randomId = globalThis.crypto?.randomUUID?.();
-  return randomId ? `${prefix}-${randomId}` : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function toChatMessage(message: ConversationMessage): ChatMessage {
-  return {
-    role: message.role,
-    content: message.content,
-    ...(message.thinking ? { thinking: message.thinking } : {}),
-  };
-}
-
-function messageStatus(value: string): MessageStatus {
-  return value === "streaming" || value === "cancelled" || value === "error" ? value : "done";
-}
-
-function safeMode(value: string): PerformanceMode {
-  return value === "fast" || value === "balanced" || value === "reasoning" ? value : "fast";
-}
-
-function fromStoredMessage(message: StoredMessage, alias?: string): ConversationMessage {
-  return {
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    thinking: message.thinking ?? undefined,
-    status: messageStatus(message.status),
-    createdAt: message.createdAt,
-    metrics: message.metrics ?? null,
-    modelAlias: alias,
-    attachments: message.attachments,
-  };
-}
-
-function responseMetrics(response: ChatResponse | undefined, startedAt: number): ChatMetrics | null {
-  return response ? deriveChatMetrics(response, performance.now() - startedAt) : null;
-}
-
-function displayTime(value: string): string {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 0 ? new Date(numeric) : new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function attachmentDetail(attachment: AttachmentSummary): string {
-  if (attachment.kind === "PDF") {
-    return `${attachment.pageCount ?? 0} 页 · ${attachment.chunkCount} 个片段`;
-  }
-  if (attachment.kind === "DOCX") {
-    return `${attachment.chunkCount} 个片段`;
-  }
-  const rows = attachment.sheets.reduce((total, sheet) => total + sheet.rows, 0);
-  return `${attachment.sheets.length} 个工作表 · ${rows} 行`;
-}
-
-function downloadExport(payload: ExportPayload) {
-  const blob = new Blob([payload.content], { type: payload.format === "json" ? "application/json" : "text/markdown" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = payload.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+  return (
+    <svg aria-hidden="true" focusable="false" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d={ICON_PATHS[name]} />
+    </svg>
+  );
 }
 
 export default function App() {
@@ -236,6 +132,7 @@ export default function App() {
   const lastStreamSequence = useRef<number | null>(null);
   const paintState = useRef(new Map<string, { first: boolean; twenty: boolean; terminal: boolean }>());
   const conversationIdRef = useRef<string | null>(null);
+  const conversationLoadSequence = useRef(0);
   const requestUserStartedAt = useRef(0);
   const requestStartedAt = useRef(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -539,7 +436,7 @@ export default function App() {
       const modifier = event.ctrlKey || event.metaKey;
       if (modifier && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        if (!busy) startNewConversation();
+        if (!busy && !loadingConversation) startNewConversation();
       } else if (event.key === "Escape" && busy) {
         event.preventDefault();
         void cancelMessage();
@@ -547,7 +444,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [busy]);
+  }, [busy, loadingConversation]);
 
   useEffect(() => {
     const closeContextMenu = (event: KeyboardEvent) => {
@@ -565,10 +462,18 @@ export default function App() {
 
   async function selectConversation(conversation: ConversationSummary) {
     if (busy || loadingConversation || conversation.id === currentConversationId) return;
+    const loadSequence = conversationLoadSequence.current + 1;
+    conversationLoadSequence.current = loadSequence;
     setLoadingConversation(true);
     setError(null);
+    const stagedAttachmentIds = attachments.map((attachment) => attachment.id);
+    if (stagedAttachmentIds.length > 0) {
+      void releaseLocalAttachments(stagedAttachmentIds).catch(() => undefined);
+    }
+    setAttachments([]);
     try {
       const detail: ConversationDetail = await getConversation(conversation.id);
+      if (loadSequence !== conversationLoadSequence.current) return;
       conversationIdRef.current = detail.conversation.id;
       setCurrentConversationId(detail.conversation.id);
       setSelectedModel(detail.conversation.model);
@@ -578,21 +483,27 @@ export default function App() {
       followMessagesRef.current = true;
       const restored = detail.messages.map((message) => fromStoredMessage(message, activeAlias));
       setMessages(restored);
-      setAttachments([]);
       const lastWithMetrics = [...detail.messages].reverse().find((message) => message.metrics);
       setLastMetrics(lastWithMetrics?.metrics ?? null);
       setLastElapsedMs(lastWithMetrics?.metrics?.wallMs ?? null);
       setDraft("");
     } catch (loadError) {
-      setError(errorText(loadError));
+      if (loadSequence === conversationLoadSequence.current) setError(errorText(loadError));
     } finally {
-      setLoadingConversation(false);
-      window.setTimeout(() => composerRef.current?.focus(), 0);
+      if (loadSequence === conversationLoadSequence.current) {
+        setLoadingConversation(false);
+        window.setTimeout(() => composerRef.current?.focus(), 0);
+      }
     }
   }
 
   function startNewConversation() {
-    if (busy) return;
+    if (busy || loadingConversation) return;
+    conversationLoadSequence.current += 1;
+    const stagedAttachmentIds = attachments.map((attachment) => attachment.id);
+    if (stagedAttachmentIds.length > 0) {
+      void releaseLocalAttachments(stagedAttachmentIds).catch(() => undefined);
+    }
     conversationIdRef.current = null;
     setCurrentConversationId(null);
     const configuredModel = settings.defaultModel.trim();
@@ -630,6 +541,7 @@ export default function App() {
     recordDiagnostic(requestId, "T0", { mode, elapsedFromT0Ms: 0 });
     const conversationId = conversationIdRef.current ?? newId("conversation");
     const hadConversation = Boolean(conversationIdRef.current);
+    let conversationPersisted = hadConversation;
     const user: ConversationMessage = {
       id: newId("user"),
       role: "user",
@@ -683,8 +595,6 @@ export default function App() {
         newConversation: !conversationIdRef.current,
       });
       if (!conversationIdRef.current) {
-        conversationIdRef.current = conversationId;
-        setCurrentConversationId(conversationId);
         const detail = await createConversationWithMessage(
           conversationId,
           selectedModel,
@@ -693,6 +603,9 @@ export default function App() {
           undefined,
           activeModelAlias,
         );
+        conversationPersisted = true;
+        conversationIdRef.current = conversationId;
+        setCurrentConversationId(conversationId);
         if (!searchRef.current.trim()) {
           setConversations((current) => [
             detail.conversation,
@@ -738,9 +651,12 @@ export default function App() {
       const message = errorText(startError);
       setMessages((current) => current.map((item) => item.id === assistant.id ? { ...item, status: "error", error: message } : item));
       setError(message);
-      if (!hadConversation && !messages.some((item) => item.role === "user" || item.role === "assistant")) {
+      if (!shouldKeepConversationAfterStartFailure(hadConversation, conversationPersisted)) {
         conversationIdRef.current = null;
         setCurrentConversationId(null);
+      }
+      if (messageAttachments.length > 0) {
+        void releaseLocalAttachments(messageAttachments.map((attachment) => attachment.id)).catch(() => undefined);
       }
       activeRequestId.current = null;
       requestConversationId.current = null;
@@ -784,6 +700,7 @@ export default function App() {
 
   function removeLocalAttachment(id: string) {
     if (parsingAttachments) return;
+    void releaseLocalAttachments([id]).catch(() => undefined);
     setAttachments((current) => current.filter((attachment) => attachment.id !== id));
   }
 
@@ -836,7 +753,7 @@ export default function App() {
   }
 
   async function removeConversation(conversation: ConversationSummary) {
-    if (busy) return;
+    if (busy || loadingConversation) return;
     if (!window.confirm(`确定删除“${conversation.title}”及其中的消息吗？`)) return;
     try {
       await deleteConversation(conversation.id);
@@ -859,6 +776,7 @@ export default function App() {
   }
 
   async function clearLocalConversations() {
+    if (busy || loadingConversation) return;
     if (!window.confirm("确定清空所有本地会话和消息吗？设置不会被删除。")) return;
     try {
       await clearConversations();
@@ -914,27 +832,20 @@ export default function App() {
           <span>本地 Ollama</span>
         </div>
         <div className="window-controls" aria-label="窗口控制">
-          <button type="button" className="window-control" title="最小化" aria-label="最小化" onMouseDown={(event) => event.stopPropagation()} onClick={minimizeWindow}>−</button>
-          <button type="button" className="window-control" title="最大化" aria-label="最大化" onMouseDown={(event) => event.stopPropagation()} onClick={toggleWindowMaximize}>□</button>
-          <button type="button" className="window-control close" title="关闭" aria-label="关闭" onMouseDown={(event) => event.stopPropagation()} onClick={closeWindow}>×</button>
+          <button type="button" className="window-control" title="最小化" aria-label="最小化" onMouseDown={(event) => event.stopPropagation()} onClick={minimizeWindow}><Icon name="minimize" size={15} /></button>
+          <button type="button" className="window-control" title="最大化" aria-label="最大化" onMouseDown={(event) => event.stopPropagation()} onClick={toggleWindowMaximize}><Icon name="maximize" size={14} /></button>
+          <button type="button" className="window-control close" title="关闭" aria-label="关闭" onMouseDown={(event) => event.stopPropagation()} onClick={closeWindow}><Icon name="close" size={16} /></button>
         </div>
       </header>
 
     <main className="chat-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">O</div>
-          <div>
-            <h1>Ollmin</h1>
-          </div>
-        </div>
-
         <div className="sidebar-top-row">
-          <button className="primary-button new-chat-button" onClick={startNewConversation} disabled={busy}>＋ 新建对话 <span>Ctrl+N</span></button>
-          <div className={`status-pill ${status ? "online" : "offline"}`}>
-            <span className="status-dot" />
-            {status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
-          </div>
+          <button className="primary-button new-chat-button" onClick={startNewConversation} disabled={busy || loadingConversation}><Icon name="plus" size={17} /><span>新建对话</span><kbd>Ctrl+N</kbd></button>
+          <StatusPill
+            online={Boolean(status)}
+            label={status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
+          />
         </div>
 
         <div className="session-tools">
@@ -949,8 +860,8 @@ export default function App() {
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                const menuWidth = 150;
-                const menuHeight = 46;
+                const menuWidth = 170;
+                const menuHeight = 52;
                 setSessionContextMenu({
                   conversation,
                   x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
@@ -995,9 +906,8 @@ export default function App() {
           <div ref={messageListRef} className="message-list" onScroll={handleMessageListScroll} aria-live="polite">
             {loadingConversation ? <div className="empty-state"><div className="empty-icon">…</div><h3>正在恢复会话</h3></div> : messages.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-icon">⌁</div>
+                <div className="empty-icon"><Icon name="sparkle" size={23} /></div>
                 <h3>开始一段本地对话</h3>
-                <p>会话会保存在本机 SQLite。快速模式默认关闭思考并严格裁剪历史；思考内容默认不落盘。</p>
               </div>
             ) : messages.map((message) => (
               <MessageItem
@@ -1010,8 +920,6 @@ export default function App() {
           </div>
         </Profiler>
 
-        {lastMetrics ? <div className="metrics-strip"><span>加载 {formatMetric(lastMetrics.loadMs, 0)} ms</span><span>提示词 {lastMetrics.promptTokens ?? "—"} token · {formatMetric(lastMetrics.promptMs, 0)} ms</span><span>输出 {lastMetrics.outputTokens ?? "—"} token · 思考字符 {lastMetrics.thinkingCharacters}</span>{lastMetrics.stopReason === "length" ? <span className="metrics-warning" title="Ollama 因达到 num_predict 上限结束生成">已达到输出上限</span> : null}</div> : null}
-
         <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
           {attachments.length > 0 ? <div className="composer-attachments" aria-label="已解析附件">
             {attachments.map((attachment) => (
@@ -1020,32 +928,38 @@ export default function App() {
                   <strong>{attachment.kind} · {attachment.name}</strong>
                   <small>{attachmentDetail(attachment)} · 已本地解析</small>
                 </div>
-                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => void removeLocalAttachment(attachment.id)} disabled={parsingAttachments}>×</button>
+                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => void removeLocalAttachment(attachment.id)} disabled={parsingAttachments}><Icon name="close" size={16} /></button>
               </div>
             ))}
             <p>发送时会按当前问题选取有限片段作为本地参考资料；完整文件不会上传。</p>
           </div> : null}
-          <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={3} />
+          <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={2} />
           <div className="composer-toolbar">
             <div className="composer-selection" aria-label="模型与性能模式">
-              <button type="button" className="composer-file-button" onClick={() => void addLocalAttachments()} disabled={busy || warming || loadingConversation || parsingAttachments}>{parsingAttachments ? "解析中…" : "+ 文件"}</button>
+              <button type="button" className="composer-file-button" onClick={() => void addLocalAttachments()} disabled={busy || warming || loadingConversation || parsingAttachments}>{parsingAttachments ? "解析中…" : <><Icon name="plus" size={14} />文件</>}</button>
               <span className="composer-selection-divider" aria-hidden="true">·</span>
-              <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
-                {models.length === 0 ? <option value="">没有检测到模型</option> : null}
-                {models.map((model) => {
-                  const name = modelName(model);
-                  return <option key={name} value={name}>{modelAliasFor(settings.modelAliases, name, name === selectedModel ? currentModelAlias : undefined)}</option>;
-                })}
-              </select>
+              <div className="select-control">
+                <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
+                  {models.length === 0 ? <option value="">没有检测到模型</option> : null}
+                  {models.map((model) => {
+                    const name = modelName(model);
+                    return <option key={name} value={name}>{modelAliasFor(settings.modelAliases, name, name === selectedModel ? currentModelAlias : undefined)}</option>;
+                  })}
+                </select>
+                <Icon name="chevron" size={14} />
+              </div>
               <span className="composer-selection-divider" aria-hidden="true">·</span>
-              <select className="composer-select mode-select" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy || warming || loadingConversation}>
-                {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-              </select>
+              <div className="select-control">
+                <select className="composer-select mode-select" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy || warming || loadingConversation}>
+                  {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
+                </select>
+                <Icon name="chevron" size={14} />
+              </div>
             </div>
             <div className="composer-toolbar-actions">
               <span className="composer-status">{busy ? "正在接收本地流… · Esc 停止" : ""}</span>
               {busy ? <button type="button" className="stop-button" onClick={() => void cancelMessage()}>停止</button> : null}
-              <button type="submit" className="send-button" aria-label={busy ? "生成中" : "发送"} disabled={submitDisabled}>{busy ? "…" : "↑"}</button>
+              <button type="submit" className="send-button" aria-label={busy ? "生成中" : "发送"} disabled={submitDisabled}>{busy ? "…" : <Icon name="send" size={17} />}</button>
             </div>
           </div>
         </form>
@@ -1062,7 +976,7 @@ export default function App() {
             type="button"
             role="menuitem"
             onClick={() => void removeConversation(sessionContextMenu.conversation)}
-            disabled={busy}
+            disabled={busy || loadingConversation}
           >
             删除会话
           </button>
@@ -1071,7 +985,7 @@ export default function App() {
 
       {showSettings ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettings(false)}>
         <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="modal-heading"><div><p className="section-kicker">本地设置</p><h2 id="settings-title">Ollmin 设置</h2></div><button className="modal-close" onClick={() => setShowSettings(false)}>×</button></div>
+          <div className="modal-heading"><div><p className="section-kicker">本地设置</p><h2 id="settings-title">Ollmin 设置</h2></div><button type="button" className="modal-close" aria-label="关闭设置" onClick={() => setShowSettings(false)}><Icon name="close" size={17} /></button></div>
           <div className="settings-connection">
             <button className="ghost-button" onClick={() => void refreshConnection()} disabled={busy || warming}>刷新连接</button>
             <span>{status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}</span>
@@ -1079,71 +993,89 @@ export default function App() {
           <div className="settings-grid">
             <div className="settings-field">
               <label htmlFor="theme">主题</label>
-              <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
-                <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
-              </select>
+              <div className="select-control">
+                <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
+                  <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
             <div className="settings-field">
               <label htmlFor="default-mode">默认性能模式</label>
-              <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
-                {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-              </select>
+              <div className="select-control">
+                <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
+                  {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
           </div>
           <div className="settings-grid">
             <div className="settings-field">
               <label htmlFor="settings-model">新会话模型</label>
-              <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
-                <option value="">自动选择第一个可用模型</option>
-                {models.map((model) => {
-                  const name = modelName(model);
-                  return <option key={name} value={name}>{modelAliasFor(settingsDraft.modelAliases, name)}</option>;
-                })}
-              </select>
+              <div className="select-control">
+                <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
+                  <option value="">自动选择第一个可用模型</option>
+                  {models.map((model) => {
+                    const name = modelName(model);
+                    return <option key={name} value={name}>{modelAliasFor(settingsDraft.modelAliases, name)}</option>;
+                  })}
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
             <div className="settings-field">
               <label htmlFor="context-size">上下文大小</label>
-              <select
-                id="context-size"
-                value={settingsDraft.contextSize}
-                onChange={(event) => setSettingsDraft((current) => ({
-                  ...current,
-                  contextSize: Number(event.target.value) as ContextSize,
-                }))}
-              >
-                {CONTEXT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size / 1024}K</option>)}
-              </select>
+              <div className="select-control">
+                <select
+                  id="context-size"
+                  value={settingsDraft.contextSize}
+                  onChange={(event) => setSettingsDraft((current) => ({
+                    ...current,
+                    contextSize: Number(event.target.value) as ContextSize,
+                  }))}
+                >
+                  {CONTEXT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size / 1024}K</option>)}
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
           </div>
           <div className="settings-grid">
             <div className="settings-field">
               <label htmlFor="output-token-limit">输出消息 token 上限</label>
-              <select
-                id="output-token-limit"
-                value={settingsDraft.outputTokenLimit}
-                onChange={(event) => setSettingsDraft((current) => ({
-                  ...current,
-                  outputTokenLimit: Number(event.target.value) as OutputTokenLimit,
-                }))}
-              >
-                {OUTPUT_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit / 1024}K</option>)}
-              </select>
+              <div className="select-control">
+                <select
+                  id="output-token-limit"
+                  value={settingsDraft.outputTokenLimit}
+                  onChange={(event) => setSettingsDraft((current) => ({
+                    ...current,
+                    outputTokenLimit: Number(event.target.value) as OutputTokenLimit,
+                  }))}
+                >
+                  {OUTPUT_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit / 1024}K</option>)}
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
             <div className="settings-field">
               <label htmlFor="reasoning-token-limit">推理输出 token 上限</label>
-              <select
-                id="reasoning-token-limit"
-                value={settingsDraft.reasoningTokenLimit}
-                onChange={(event) => setSettingsDraft((current) => ({
-                  ...current,
-                  reasoningTokenLimit: Number(event.target.value) as ReasoningTokenLimit,
-                }))}
-              >
-                {REASONING_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit === 0 ? "不限" : `${limit / 1024}K`}</option>)}
-              </select>
+              <div className="select-control">
+                <select
+                  id="reasoning-token-limit"
+                  value={settingsDraft.reasoningTokenLimit}
+                  onChange={(event) => setSettingsDraft((current) => ({
+                    ...current,
+                    reasoningTokenLimit: Number(event.target.value) as ReasoningTokenLimit,
+                  }))}
+                >
+                  {REASONING_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit === 0 ? "自动（硬上限16K）" : `${limit / 1024}K`}</option>)}
+                </select>
+                <Icon name="chevron" size={16} />
+              </div>
             </div>
           </div>
-          <p className="settings-note">推理上限仅在开启思考的模式中生效；快速模式关闭思考，“不限”表示不额外限制推理输出。Ollama 会将推理与正文计入同一生成预算，Ollmin 按两项上限合并分配。</p>
+          <p className="settings-note">推理上限仅在开启思考的模式中生效；快速模式关闭思考，“自动”会按当前模式分配，并受 16K token 安全上限约束。Ollama 会将推理与正文计入同一生成预算，Ollmin 按两项上限合并分配。</p>
           <div className="settings-disclosure-row">
             <button
               type="button"
@@ -1152,7 +1084,7 @@ export default function App() {
               onClick={() => setModelAliasesExpanded((expanded) => !expanded)}
             >
               <span>模型别名</span>
-              <span aria-hidden="true">{modelAliasesExpanded ? "⌃" : "⌄"}</span>
+              <Icon name="chevron" size={16} />
             </button>
             <button
               type="button"
@@ -1161,7 +1093,7 @@ export default function App() {
               onClick={() => setExportExpanded((expanded) => !expanded)}
             >
               <span>导出当前会话</span>
-              <span aria-hidden="true">{exportExpanded ? "⌃" : "⌄"}</span>
+              <Icon name="chevron" size={16} />
             </button>
           </div>
           {modelAliasesExpanded ? <div className="model-alias-list">
@@ -1196,7 +1128,7 @@ export default function App() {
           </div> : null}
           <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
           <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
-          <div className="settings-danger"><button className="danger-button" onClick={() => void clearLocalConversations()}>清空所有本地会话</button></div>
+          <div className="settings-danger"><button className="danger-button" onClick={() => void clearLocalConversations()} disabled={busy || loadingConversation}>清空所有本地会话</button></div>
           <div className="modal-actions"><button className="ghost-button" onClick={() => setShowSettings(false)}>取消</button><button className="primary-button" onClick={() => void saveSettingsDraft()} disabled={savingSettings}>{savingSettings ? "保存中…" : "保存设置"}</button></div>
         </section>
       </div> : null}

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { AttachmentSummary, ChatMessage } from "../types";
+import type { AttachmentSummary, ChatMessage } from "../contracts/ipc";
 import MarkdownContent from "./MarkdownContent";
 
 export type MessageItemStatus = "streaming" | "done" | "cancelled" | "error";
@@ -56,12 +56,27 @@ function attachmentDetail(attachment: AttachmentSummary): string {
 function MessageItem({ message, copied, onCopy }: MessageItemProps) {
   return (
     <article className={`message ${message.role} ${message.status}`}>
-      <div className="message-meta">
-        <span>{message.role === "user" ? "你" : message.modelAlias || "模型"}</span>
-        {message.status === "streaming" ? <span className="streaming-label">生成中…</span> : null}
-        {message.status === "cancelled" ? <span>已停止</span> : null}
-        {message.status === "error" ? <span>失败</span> : null}
-      </div>
+      {message.role === "assistant" || message.status !== "done" ? (
+        <div className="message-meta">
+          {message.role === "assistant" ? <span>{message.modelAlias || "模型"}</span> : null}
+          {message.status === "streaming" ? <span className="streaming-label">生成中…</span> : null}
+          {message.status === "cancelled" ? <span>已停止</span> : null}
+          {message.status === "error" ? <span>失败</span> : null}
+          {message.role === "assistant" && message.content ? (
+            <button
+              type="button"
+              className="copy-button"
+              aria-label={copied ? "已复制回复" : "复制回复"}
+              title={copied ? "已复制回复" : "复制回复"}
+              onClick={() => void onCopy(message)}
+            >
+              <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                {copied ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>}
+              </svg>
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {message.role === "assistant" && message.thinking ? (
         <ThinkingBlock thinking={message.thinking} open={message.status === "streaming"} />
       ) : null}
@@ -80,11 +95,6 @@ function MessageItem({ message, copied, onCopy }: MessageItemProps) {
         </div>
       ) : null}
       {message.error ? <p className="message-error">{message.error}</p> : null}
-      {message.role === "assistant" && message.content ? (
-        <button className="copy-button" onClick={() => void onCopy(message)}>
-          {copied ? "已复制" : "复制"}
-        </button>
-      ) : null}
     </article>
   );
 }

@@ -7,7 +7,7 @@
   <p><strong>Lightweight local AI for everyday PCs.</strong><br>
   A fast Ollama desktop client optimized for CPUs, integrated graphics, and small local models.</p>
   <p>
-    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe"><strong>Download for Windows (v1.1.0)</strong></a>
+    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe"><strong>Download for Windows (v1.1.1)</strong></a>
     &nbsp;·&nbsp;
     <a href="https://github.com/lincux0/ollmin/releases">View all releases</a>
   </p>
@@ -15,7 +15,7 @@
 </div>
 
 <p align="center">
-  <img src="assets/ollmin-ui.png" alt="Ollmin chat window with the Fast mode selector and live performance metrics" width="1000">
+  <img src="assets/ollmin-ui.png" alt="Ollmin desktop chat window with local model controls" width="1000">
 </p>
 
 ## Why Ollmin?
@@ -24,7 +24,7 @@
 - Designed for small local models, including 3B and 4B-class models;
 - Fully local: Ollmin connects to Ollama on your own PC and needs no account;
 - Local PDF, DOCX, XLS, and XLSX parsing for file questions;
-- Live load time, prompt/output token counts, and tokens per second (tok/s);
+- A compact per-turn summary of generation speed and elapsed time;
 - A focused Windows desktop app that avoids unnecessary context and background model requests.
 
 ## Features
@@ -33,7 +33,7 @@
 - A single Ollama chat request at a time, with stop controls and separate thinking/answer display;
 - Local conversation history in SQLite, with search, rename, restore, delete, and export;
 - File excerpts selected for the current question instead of sending an entire document;
-- Clear connection, loading, token, and stop-reason information.
+- Clear connection status, request state, and stop feedback.
 
 Model speed depends on the model, quantization, context, and hardware. The modes configure requests to Ollama; they do not guarantee a particular inference speed.
 
@@ -52,7 +52,7 @@ Model speed depends on the model, quantization, context, and hardware. The modes
 
 ## Quick start for users
 
-1. [Download the Windows installer](https://github.com/lincux0/ollmin/releases/download/v1.1.0/Ollmin_1.1.0_x64-setup.exe) and install Ollmin.
+1. [Download the Windows installer](https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe) and install Ollmin.
 2. Install and start [Ollama](https://ollama.com/), then make sure at least one model is available. For example, run <code>ollama pull qwen3:4b</code>.
 3. Open Ollmin, select the local model and a performance mode, then start a conversation.
 
@@ -114,7 +114,7 @@ Run the checks used by the repository's CI:
     cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     cargo test --manifest-path src-tauri/Cargo.toml
 
-The v1.1.0 Windows installer is attached to the [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.0). Source build commands are for developers.
+The v1.1.1 Windows installer is attached to the [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.1). Source build commands are for developers.
 
 ## FAQ
 
@@ -150,7 +150,7 @@ Bug reports and focused feature ideas are welcome. If Ollmin fits your workflow,
 
 ## Current status
 
-The latest published release is v1.1.0. Installer signing, automatic updates, and full desktop end-to-end coverage are not included in this release. New features should preserve Ollmin's local-first design and avoid unnecessary model requests or context.
+The latest published release is v1.1.1. Installer signing, automatic updates, and full desktop end-to-end coverage are not included in this release. New features should preserve Ollmin's local-first design and avoid unnecessary model requests or context.
 
 ## License
 

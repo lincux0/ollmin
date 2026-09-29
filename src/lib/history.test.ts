@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { trimHistoryForFastMode } from "./history";
-import type { ChatMessage } from "../types";
+import type { ChatMessage } from "../contracts/ipc";
 
 const message = (role: ChatMessage["role"], content: string): ChatMessage => ({ role, content });
 
