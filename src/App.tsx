@@ -1,8 +1,8 @@
-import { Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ProfilerOnRenderCallback } from "react";
+import { Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ProfilerOnRenderCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./index.css";
+import "./features/chat/reading.css";
 import {
   clearConversations,
   createConversationWithMessage,
@@ -24,7 +24,10 @@ import {
   warmModel,
 } from "./api";
 import MessageItem from "./components/MessageItem";
-import StatusPill from "./components/ui/StatusPill";
+import Modal from "./components/ui/Modal";
+import SessionSidebar, { type SessionSidebarHandle } from "./features/sessions/SessionSidebar";
+import ChatWorkspace from "./features/chat/ChatWorkspace";
+import { useSidebar } from "./features/shell/useSidebar";
 import {
   errorText,
   fromStoredMessage,
@@ -38,27 +41,29 @@ import type {
   AssistantSnapshot,
   ConversationMessage,
   MessageStatus,
-  SessionContextMenu,
 } from "./features/chat/types";
-import { attachmentDetail, MAX_COMPOSER_ATTACHMENTS } from "./features/attachments/helpers";
+import { MAX_COMPOSER_ATTACHMENTS } from "./features/attachments/helpers";
+import Composer from "./features/chat/Composer";
+import ModelPicker from "./features/chat/ModelPicker";
+import SettingsDialog from "./features/settings/SettingsDialog";
+import { readUiFontSize, writeUiFontSize, type UiFontSize } from "./features/settings/uiFontSize";
+import { version as appVersion } from "../package.json";
+import TurnNavigator from "./features/chat/TurnNavigator";
+import { useChatReading } from "./features/chat/useChatReading";
 import { modelAlias, modelAliasFor, modelName } from "./features/models/helpers";
-import { displayTime } from "./features/sessions/helpers";
 import { DEFAULT_SETTINGS } from "./features/settings/defaults";
 import { downloadExport } from "./features/shell/export";
+import Icon from "./features/shell/Icon";
+import WindowTitleBar from "./features/shell/WindowTitleBar";
+import { applyThemePreference } from "./features/shell/theme";
 import { diagnosticsEnabled, installLongTaskObserver, recordDiagnostic, scheduleDiagnosticPaint } from "./features/diagnostics/diagnostics";
 import { trimHistoryForFastMode } from "./lib/history";
 import { formatMetric } from "./lib/metrics";
 import { shouldKeepConversationAfterStartFailure } from "./lib/session";
 import {
-  CONTEXT_SIZE_OPTIONS,
-  OUTPUT_TOKEN_LIMIT_OPTIONS,
   PERFORMANCE_PROFILES,
   profileForMode,
-  REASONING_TOKEN_LIMIT_OPTIONS,
-  type ContextSize,
-  type OutputTokenLimit,
   type PerformanceMode,
-  type ReasoningTokenLimit,
 } from "./lib/performance";
 import { createStreamCoalescer, type StreamCoalescer } from "./lib/streaming";
 import type {
@@ -74,32 +79,15 @@ import type {
   OllamaModel,
   PersistedMessageInput,
   ServiceStatus,
-  ThemeMode,
 } from "./contracts/ipc";
-
-type IconName = "plus" | "minimize" | "maximize" | "close" | "sparkle" | "send" | "chevron";
-
-const ICON_PATHS: Record<IconName, string> = {
-  plus: "M12 5v14M5 12h14",
-  minimize: "M5 12h14",
-  maximize: "M6 6h12v12H6z",
-  close: "M6 6l12 12M18 6 6 18",
-  sparkle: "M12 3.5l1.9 5.8L20 11l-6.1 1.7L12 19l-1.9-6.3L4 11l6.1-1.7L12 3.5z",
-  send: "M12 19V5m-6 6 6-6 6 6",
-  chevron: "m7 10 5 5 5-5",
-};
-
-function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
-  return (
-    <svg aria-hidden="true" focusable="false" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d={ICON_PATHS[name]} />
-    </svg>
-  );
-}
 
 export default function App() {
   const [status, setStatus] = useState<ServiceStatus | null>(null);
   const [models, setModels] = useState<OllamaModel[]>([]);
+  const [initializing, setInitializing] = useState(true);
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const connectionSequence = useRef(0);
   const [selectedModel, setSelectedModel] = useState("");
   const [currentModelAlias, setCurrentModelAlias] = useState("");
   const [mode, setMode] = useState<PerformanceMode>(DEFAULT_SETTINGS.defaultMode);
@@ -114,16 +102,24 @@ export default function App() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [search, setSearch] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const searchSequence = useRef(0);
+  const sidebarRef = useRef<SessionSidebarHandle>(null);
+  const sidebar = useSidebar();
+  const [activeSummary, setActiveSummary] = useState<ConversationSummary | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; message?: string; value?: string; action: (value: string) => Promise<void> | void } | null>(null);
+  const [dialogValue, setDialogValue] = useState("");
+  const [dialogBusy, setDialogBusy] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [modelAliasesExpanded, setModelAliasesExpanded] = useState(false);
-  const [exportExpanded, setExportExpanded] = useState(false);
+  const [uiFontSize, setUiFontSize] = useState<UiFontSize>(readUiFontSize);
+  const [uiFontSizeDraft, setUiFontSizeDraft] = useState<UiFontSize>(uiFontSize);
   const [attachments, setAttachments] = useState<AttachmentSummary[]>([]);
   const [parsingAttachments, setParsingAttachments] = useState(false);
-  const [sessionContextMenu, setSessionContextMenu] = useState<SessionContextMenu | null>(null);
   const activeRequestId = useRef<string | null>(null);
   const requestConversationId = useRef<string | null>(null);
   const assistantBuffer = useRef<AssistantBuffer | null>(null);
@@ -137,8 +133,9 @@ export default function App() {
   const requestStartedAt = useRef(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const messageContentRef = useRef<HTMLDivElement | null>(null);
   const followMessagesRef = useRef(true);
-  const tauriWindowRef = useRef<TauriWindow | null>(null);
+  const reading = useChatReading(messageListRef, messageContentRef, followMessagesRef, messages, currentConversationId);
   const searchRef = useRef(search);
   searchRef.current = search;
 
@@ -197,57 +194,19 @@ export default function App() {
     [],
   );
 
-  const handleMessageListScroll = useCallback(() => {
-    const element = messageListRef.current;
-    if (!element) return;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    followMessagesRef.current = distanceFromBottom < 72;
-  }, []);
-
-  const handleWindowDrag = useCallback((event: MouseEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
-    void tauriWindowRef.current?.startDragging().catch(() => undefined);
-  }, []);
-
-  const toggleWindowMaximize = useCallback(() => {
-    void tauriWindowRef.current?.toggleMaximize().catch(() => undefined);
-  }, []);
-
-  const minimizeWindow = useCallback(() => {
-    void tauriWindowRef.current?.minimize().catch(() => undefined);
-  }, []);
-
-  const closeWindow = useCallback(() => {
-    void tauriWindowRef.current?.close().catch(() => undefined);
-  }, []);
-
   useEffect(() => installLongTaskObserver(), []);
-  useEffect(() => {
-    try {
-      tauriWindowRef.current = getCurrentWindow();
-    } catch {
-      // Browser preview/tests do not expose Tauri window internals.
-      tauriWindowRef.current = null;
-    }
-  }, []);
-
-  useLayoutEffect(() => {
-    const element = messageListRef.current;
-    if (!element || !followMessagesRef.current) return;
-    element.scrollTop = element.scrollHeight;
-  }, [messages]);
 
   useEffect(() => {
-    if (conversationIdRef.current || busy || models.length === 0) return;
+    if (initializing || conversationIdRef.current || busy || models.length === 0) return;
     const configured = settings.defaultModel.trim();
-    const preferred = configured && models.some((model) => modelName(model) === configured)
-      ? configured
-      : selectedModel && models.some((model) => modelName(model) === selectedModel)
-        ? selectedModel
+    const preferred = selectedModel && models.some((model) => modelName(model) === selectedModel)
+      ? selectedModel
+      : configured && models.some((model) => modelName(model) === configured)
+        ? configured
         : modelName(models[0]);
     if (preferred !== selectedModel) setSelectedModel(preferred);
     setCurrentModelAlias(modelAliasFor(settings.modelAliases, preferred));
-  }, [busy, models, settings.defaultModel, settings.modelAliases, selectedModel]);
+  }, [busy, initializing, models, settings.defaultModel, settings.modelAliases, selectedModel]);
 
   useEffect(() => () => {
     streamCoalescer.current?.dispose();
@@ -255,52 +214,73 @@ export default function App() {
   }, []);
 
   const refreshConnection = useCallback(async () => {
-    try {
-      const [service, modelResponse] = await Promise.all([
+      const sequence = ++connectionSequence.current;
+      setLoadingModels(true);
+      setModelsError(null);
+      const [service, modelResponse] = await Promise.allSettled([
         getServiceStatus(),
         getModels(),
       ]);
-      const nextModels = modelResponse.models ?? [];
-      setStatus(service);
+      if (sequence !== connectionSequence.current) return;
+      setStatus(service.status === "fulfilled" ? service.value : null);
+      if (service.status === "rejected") setError(`Ollama 未连接：${errorText(service.reason)}`);
+      const nextModels = modelResponse.status === "fulfilled" ? modelResponse.value.models ?? [] : [];
       setModels(nextModels);
+      if (modelResponse.status === "rejected") setModelsError(`模型列表读取失败：${errorText(modelResponse.reason)}`);
       if (nextModels.length === 0 && !conversationIdRef.current) {
         setSelectedModel("");
         setCurrentModelAlias("");
       }
-    } catch (refreshError) {
-      setStatus(null);
-      setError(errorText(refreshError));
-    }
+      setLoadingModels(false);
   }, []);
 
   const loadConversations = useCallback(async (query = "") => {
+    const sequence = ++searchSequence.current;
+    setSearchLoading(true);
+    setSearchError(null);
     try {
-      setConversations(await listConversations(query));
+      const result = await listConversations(query.trim().slice(0, 500));
+      if (sequence === searchSequence.current && query === searchRef.current) setConversations(result);
     } catch (conversationError) {
-      setError(errorText(conversationError));
+      if (sequence === searchSequence.current && query === searchRef.current) setSearchError(errorText(conversationError));
+    } finally {
+      if (sequence === searchSequence.current && query === searchRef.current) setSearchLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void refreshConnection();
-    void getSettings().then((loadedSettings) => {
+    let disposed = false;
+    void Promise.all([refreshConnection(), getSettings().then((loadedSettings) => {
+      if (disposed) return;
       setSettings(loadedSettings);
       setSettingsDraft(loadedSettings);
       setMode(loadedSettings.defaultMode);
-    }).catch((settingsError) => setError(errorText(settingsError)));
+    }).catch((settingsError) => { if (!disposed) setError(errorText(settingsError)); })])
+      .finally(() => { if (!disposed) setInitializing(false); });
+    return () => { disposed = true; };
   }, [refreshConnection]);
 
   useEffect(() => {
+    // Invalidate immediately, including the 150ms debounce window.
+    searchSequence.current += 1;
+    setSearchLoading(true);
+    setSearchError(null);
     const timer = window.setTimeout(() => void loadConversations(search), 150);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); searchSequence.current += 1; };
   }, [loadConversations, search]);
 
-  useEffect(() => {
-    const resolvedTheme: Exclude<ThemeMode, "system"> = settings.theme === "system"
-      ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-      : settings.theme;
-    document.documentElement.dataset.theme = resolvedTheme;
-  }, [settings.theme]);
+  useLayoutEffect(() => {
+    return applyThemePreference(
+      showSettings ? settingsDraft.theme : settings.theme,
+      document.documentElement,
+      window.matchMedia("(prefers-color-scheme: dark)"),
+    );
+  }, [settings.theme, settingsDraft.theme, showSettings]);
+
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty("--chat-font-size", `${showSettings ? uiFontSizeDraft : uiFontSize}px`);
+    document.documentElement.style.setProperty("--chat-line-height", `${(showSettings ? uiFontSizeDraft : uiFontSize) + 10}px`);
+  }, [showSettings, uiFontSize, uiFontSizeDraft]);
 
   useEffect(() => {
     let disposed = false;
@@ -433,10 +413,16 @@ export default function App() {
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229 || event.defaultPrevented || document.querySelector('[aria-modal="true"], [role="menu"]')) return;
       const modifier = event.ctrlKey || event.metaKey;
-      if (modifier && event.key.toLowerCase() === "n") {
+      if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault(); sidebar.expand();
+        window.requestAnimationFrame(() => sidebarRef.current?.focusSearch());
+      } else if (modifier && event.altKey && !event.shiftKey && event.key.toLowerCase() === "g") {
+        event.preventDefault(); void renameCurrentConversation();
+      } else if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        if (!busy && !loadingConversation) startNewConversation();
+        if (!busy && !loadingConversation) requestNewConversation();
       } else if (event.key === "Escape" && busy) {
         event.preventDefault();
         void cancelMessage();
@@ -444,19 +430,11 @@ export default function App() {
     };
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
-  }, [busy, loadingConversation]);
-
-  useEffect(() => {
-    const closeContextMenu = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSessionContextMenu(null);
-    };
-    window.addEventListener("keydown", closeContextMenu);
-    return () => window.removeEventListener("keydown", closeContextMenu);
-  }, []);
+  });
 
   const selectedConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === currentConversationId),
-    [conversations, currentConversationId],
+    () => conversations.find((conversation) => conversation.id === currentConversationId) ?? activeSummary,
+    [conversations, currentConversationId, activeSummary],
   );
   const profile = profileForMode(mode);
 
@@ -476,6 +454,7 @@ export default function App() {
       if (loadSequence !== conversationLoadSequence.current) return;
       conversationIdRef.current = detail.conversation.id;
       setCurrentConversationId(detail.conversation.id);
+      setActiveSummary(detail.conversation);
       setSelectedModel(detail.conversation.model);
       const activeAlias = modelAliasFor(settings.modelAliases, detail.conversation.model, detail.conversation.modelAlias);
       setCurrentModelAlias(activeAlias);
@@ -506,6 +485,7 @@ export default function App() {
     }
     conversationIdRef.current = null;
     setCurrentConversationId(null);
+    setActiveSummary(null);
     const configuredModel = settings.defaultModel.trim();
     const nextModel = configuredModel && models.some((model) => modelName(model) === configuredModel)
       ? configuredModel
@@ -525,7 +505,7 @@ export default function App() {
 
   async function sendMessage() {
     const text = draft.trim();
-    if (!selectedModel || !text || busy || warming || loadingConversation) return;
+    if (!status || !models.some((model) => modelName(model) === selectedModel) || !text || activeRequestId.current || busy || warming || loadingConversation || initializing || parsingAttachments || loadingModels) return;
     const activeModelAlias = modelAlias(currentModelAlias, selectedModel);
     const messageAttachments = attachments;
 
@@ -606,6 +586,7 @@ export default function App() {
         conversationPersisted = true;
         conversationIdRef.current = conversationId;
         setCurrentConversationId(conversationId);
+        setActiveSummary(detail.conversation);
         if (!searchRef.current.trim()) {
           setConversations((current) => [
             detail.conversation,
@@ -721,7 +702,9 @@ export default function App() {
       setCopiedId(message.id);
       window.setTimeout(() => setCopiedId((current) => current === message.id ? null : current), 1400);
     } catch (copyError) {
+      setCopiedId((current) => current === message.id ? null : current);
       setError(`复制失败：${errorText(copyError)}`);
+      throw copyError;
     }
   }
 
@@ -739,30 +722,43 @@ export default function App() {
     }
   }
 
-  async function renameCurrentConversation() {
-    const conversation = selectedConversation;
+  function openDialog(next: NonNullable<typeof dialog>) {
+    setDialogValue(next.value ?? ""); setDialogError(null); setDialog(next);
+  }
+
+  function protectDraft(action: () => void) {
+    if (!draft.trim() && attachments.length === 0) { action(); return; }
+    openDialog({ title: "放弃当前草稿？", message: "未发送的文本和附件将被清除。", action });
+  }
+
+  function requestNewConversation() { protectDraft(startNewConversation); }
+  function requestSelectConversation(conversation: ConversationSummary) {
+    if (conversation.id === currentConversationId) { composerRef.current?.focus(); return; }
+    protectDraft(() => { void selectConversation(conversation); });
+  }
+
+  function renameCurrentConversation(conversation = selectedConversation) {
     if (!conversation || busy) return;
-    const title = window.prompt("会话名称", conversation.title);
-    if (title === null || !title.trim()) return;
-    try {
-      await renameConversation(conversation.id, title.trim());
-      await loadConversations(search);
-    } catch (renameError) {
-      setError(errorText(renameError));
-    }
+    openDialog({ title: "重命名会话", value: conversation.title, action: async (value) => {
+      if (!value.trim()) throw new Error("请输入会话名称");
+      await renameConversation(conversation.id, value.trim());
+      if (conversation.id === conversationIdRef.current) setActiveSummary({ ...conversation, title: value.trim() });
+      await loadConversations(searchRef.current);
+    } });
   }
 
   async function removeConversation(conversation: ConversationSummary) {
     if (busy || loadingConversation) return;
-    if (!window.confirm(`确定删除“${conversation.title}”及其中的消息吗？`)) return;
-    try {
+    openDialog({ title: "删除会话？", message: `“${conversation.title}”及其中的消息将从本机删除，无法撤销。${conversation.id === currentConversationId && (draft.trim() || attachments.length) ? "当前未发送的草稿和附件也将被放弃。" : ""}`, action: async () => {
       await deleteConversation(conversation.id);
-      setSessionContextMenu(null);
       if (conversation.id === conversationIdRef.current) startNewConversation();
-      await loadConversations(search);
-    } catch (deleteError) {
-      setError(errorText(deleteError));
-    }
+      await loadConversations(searchRef.current);
+    } });
+  }
+
+  async function exportSession(conversation: ConversationSummary, format: ExportPayload["format"]) {
+    try { downloadExport(await exportConversation(conversation.id, format)); }
+    catch (exportError) { setError(errorText(exportError)); }
   }
 
   async function exportCurrent(format: ExportPayload["format"]) {
@@ -777,20 +773,26 @@ export default function App() {
 
   async function clearLocalConversations() {
     if (busy || loadingConversation) return;
-    if (!window.confirm("确定清空所有本地会话和消息吗？设置不会被删除。")) return;
-    try {
+    openDialog({ title: "清空本地会话？", message: "所有会话和消息将被删除，无法撤销。当前未发送的草稿和附件也将被放弃。设置不会被删除。", action: async () => {
       await clearConversations();
       startNewConversation();
-      await loadConversations(search);
-    } catch (clearError) {
-      setError(errorText(clearError));
-    }
+      await loadConversations(searchRef.current);
+      setShowSettings(false);
+    } });
   }
 
-  async function saveSettingsDraft() {
-    setSavingSettings(true);
+  function closeSettings() {
+    if (JSON.stringify(settingsDraft) !== JSON.stringify(settings) || uiFontSizeDraft !== uiFontSize) {
+      openDialog({ title: "放弃设置修改？", message: "尚未保存的设置将被放弃。", action: () => setShowSettings(false) });
+    } else setShowSettings(false);
+  }
+
+  async function saveSettingsDraft(draftSettings: AppSettings, draftFont: UiFontSize) {
+    const changedFont = draftFont !== uiFontSize;
+    if (changedFont) writeUiFontSize(draftFont);
     try {
-      const saved = await updateSettings(settingsDraft);
+      const saved = await updateSettings(draftSettings);
+      setUiFontSize(draftFont);
       setSettings(saved);
       setSettingsDraft(saved);
       if (!busy && !conversationIdRef.current) {
@@ -808,330 +810,116 @@ export default function App() {
           ? { ...message, modelAlias: activeAlias }
           : message));
       }
-      setShowSettings(false);
     } catch (settingsError) {
-      setError(errorText(settingsError));
-    } finally {
-      setSavingSettings(false);
+      if (changedFont) {
+        try { writeUiFontSize(uiFontSize); }
+        catch (restoreError) { throw new Error(`设置未保存，旧字号恢复失败：${errorText(restoreError)}`); }
+      }
+      throw settingsError;
     }
   }
 
-  const submitDisabled = !selectedModel || !draft.trim() || busy || warming || loadingConversation;
+  const settling = initializing || loadingConversation;
+  const hero = messages.length === 0 && !settling;
+  const pickerProps = {
+    models: models.map(modelName), selectedModel, modelAliases: settings.modelAliases, currentModelAlias,
+    mode, busy: busy || warming || settling || parsingAttachments, modelLocked: messages.length > 0,
+    loadingModels, modelsError, onRetryModels: () => void refreshConnection(),
+    onSelectModel: (name: string) => {
+      if (busy || warming || settling || messages.length > 0) return;
+      if (!models.some((model) => modelName(model) === name)) { setModelsError("所选模型已不可用，请刷新模型列表。"); return; }
+      setSelectedModel(name); setCurrentModelAlias(modelAliasFor(settings.modelAliases, name));
+    },
+    onSelectMode: (next: PerformanceMode) => { if (!busy && !warming && !settling) setMode(next); },
+  };
 
   return (
-    <div className="app-window" onClick={() => setSessionContextMenu(null)}>
-      <header className="window-bar">
-        <div
-          className="window-drag-region"
-          data-tauri-drag-region
-          onMouseDown={handleWindowDrag}
-          onDoubleClick={toggleWindowMaximize}
-        >
-          <span className="window-brand-mark">O</span>
-          <strong>Ollmin</strong>
-          <span>本地 Ollama</span>
-        </div>
-        <div className="window-controls" aria-label="窗口控制">
-          <button type="button" className="window-control" title="最小化" aria-label="最小化" onMouseDown={(event) => event.stopPropagation()} onClick={minimizeWindow}><Icon name="minimize" size={15} /></button>
-          <button type="button" className="window-control" title="最大化" aria-label="最大化" onMouseDown={(event) => event.stopPropagation()} onClick={toggleWindowMaximize}><Icon name="maximize" size={14} /></button>
-          <button type="button" className="window-control close" title="关闭" aria-label="关闭" onMouseDown={(event) => event.stopPropagation()} onClick={closeWindow}><Icon name="close" size={16} /></button>
-        </div>
-      </header>
+    <div className={`app-window ${initializing ? "initializing" : ""}`}>
+      <WindowTitleBar onToggleSidebar={sidebar.toggle} sidebarCollapsed={sidebar.collapsed} onNewChat={requestNewConversation} newChatDisabled={busy || loadingConversation} onSearch={() => { sidebar.expand(); requestAnimationFrame(() => sidebarRef.current?.focusSearch()); }} />
 
-    <main className="chat-shell">
-      <aside className="sidebar">
-        <div className="sidebar-top-row">
-          <button className="primary-button new-chat-button" onClick={startNewConversation} disabled={busy || loadingConversation}><Icon name="plus" size={17} /><span>新建对话</span><kbd>Ctrl+N</kbd></button>
-          <StatusPill
-            online={Boolean(status)}
-            label={status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
-          />
-        </div>
-
-        <div className="session-tools">
-          <label htmlFor="conversation-search">本地会话</label>
-          <input id="conversation-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索标题、模型或消息" />
-        </div>
-        <div className="session-list">
-          {conversations.length === 0 ? <p className="session-empty">还没有保存的会话</p> : conversations.map((conversation) => (
-            <div
-              className={`session-item ${conversation.id === currentConversationId ? "selected" : ""}`}
-              key={conversation.id}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const menuWidth = 170;
-                const menuHeight = 52;
-                setSessionContextMenu({
-                  conversation,
-                  x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
-                  y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
-                });
-              }}
-            >
-              <button className="session-main" onClick={() => void selectConversation(conversation)} disabled={busy || loadingConversation}>
-                <strong>{conversation.title}</strong>
-                <small>{modelAliasFor(settings.modelAliases, conversation.model, conversation.modelAlias)} · {conversation.messageCount} 条 · {displayTime(conversation.updatedAt)}</small>
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div className="sidebar-bottom">
-          <button className="ghost-button warm-button" onClick={() => void runWarmup()} disabled={!selectedModel || warming || busy}>
-            {warming ? "预热中…" : "常驻"}
-          </button>
-          <button className="ghost-button" onClick={() => { setSettingsDraft(settings); setModelAliasesExpanded(false); setShowSettings(true); }} disabled={busy}>设置</button>
-        </div>
-      </aside>
-
-      <section className="conversation-panel">
+    <main className={`chat-shell ${sidebar.collapsed ? "sidebar-collapsed" : ""} ${sidebar.animating ? "sidebar-animating" : ""}`} style={{ "--sidebar-width": `${sidebar.collapsed ? 0 : sidebar.width}px` } as CSSProperties}>
+      <SessionSidebar ref={sidebarRef}
+        conversations={conversations} selectedConversationId={currentConversationId} modelAliases={settings.modelAliases}
+        search={search} searchLoading={searchLoading} searchError={searchError} collapsed={sidebar.collapsed}
+        disabled={busy || loadingConversation} online={Boolean(status)} statusLabel={status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
+        selectedModel={selectedModel} warming={warming}
+        onSearchChange={setSearch} onRetrySearch={() => void loadConversations(search)}
+        onSelectConversation={requestSelectConversation} onRenameConversation={renameCurrentConversation}
+        onDeleteConversation={removeConversation} onExportConversation={exportSession}
+        onWarmup={() => void runWarmup()}
+        onOpenSettings={() => { setSettingsDraft(settings); setUiFontSizeDraft(uiFontSize); setShowSettings(true); }} />
+      {!sidebar.collapsed ? <div className="sidebar-resize-handle" {...sidebar.resizeProps} /> : null}
+      <ChatWorkspace stage={settling ? "settling" : hero ? "hero" : "active"}>
         <header className="conversation-header">
-          <div>
-            <p className="section-kicker">{selectedConversation?.title ?? "新对话"}</p>
-            <h2>{currentModelAlias || selectedModel || "选择一个本地模型"}</h2>
-          </div>
+          <h2>{selectedConversation?.title ?? "新对话"}</h2>
           <div className="conversation-header-actions">
             <span className="context-size" title={`当前会话使用的上下文窗口：${settings.contextSize.toLocaleString()} token`}>上下文 {settings.contextSize.toLocaleString()} token</span>
             {currentConversationId ? <>
-              <button className="header-button" onClick={renameCurrentConversation} disabled={busy}>重命名</button>
+              <button className="header-button" onClick={() => renameCurrentConversation()} disabled={busy}>重命名</button>
             </> : null}
             {lastMetrics ? <div className="compact-metrics"><span>{formatMetric(lastMetrics.outputTokensPerSecond, 1)} tok/s</span><span>{formatMetric(lastElapsedMs, 0)} ms</span></div> : null}
           </div>
         </header>
 
-        {error ? <div className="error-box"><strong>请求提示</strong><span>{error}</span><small>本地数据保存在应用数据目录；Ollama 仅连接 127.0.0.1:11434。</small></div> : null}
+        {error ? <div className="error-box" role="alert"><strong>请求提示</strong><span>{error}</span><small>本地会话保存在本机；请确认 Ollama 已在 127.0.0.1:11434 运行。</small></div> : null}
 
         <Profiler id="message-list" onRender={handleMessageRender}>
-          <div ref={messageListRef} className="message-list" onScroll={handleMessageListScroll} aria-live="polite">
-            {loadingConversation ? <div className="empty-state"><div className="empty-icon">…</div><h3>正在恢复会话</h3></div> : messages.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon"><Icon name="sparkle" size={23} /></div>
-                <h3>开始一段本地对话</h3>
-              </div>
-            ) : messages.map((message) => (
+          <div className="reading-area">
+          <div ref={messageListRef} className="message-list" onScroll={reading.onScroll}>
+            <div ref={messageContentRef} className="message-stack">
+            {settling ? <div className="empty-state" role="status"><h3>{initializing ? "正在读取本地设置" : "正在恢复会话"}</h3></div> : messages.map((message) => (
               <MessageItem
                 key={message.id}
                 message={message}
                 copied={copiedId === message.id}
+                copiedThinking={copiedId === `${message.id}:thinking`}
                 onCopy={copyMessage}
               />
             ))}
+            </div>
+          </div>
+          {!settling && !hero ? <TurnNavigator messages={messages} currentId={reading.currentTurn} onSelect={reading.jumpToTurn} /> : null}
           </div>
         </Profiler>
+        {reading.away && !settling && !hero ? <button type="button" className="jump-latest" onClick={reading.jumpToLatest}>回到最新 ↓</button> : null}
 
-        <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
-          {attachments.length > 0 ? <div className="composer-attachments" aria-label="已解析附件">
-            {attachments.map((attachment) => (
-              <div className="attachment-chip" key={attachment.id} title={attachment.warnings.join("\n") || attachment.name}>
-                <div className="attachment-chip-copy">
-                  <strong>{attachment.kind} · {attachment.name}</strong>
-                  <small>{attachmentDetail(attachment)} · 已本地解析</small>
-                </div>
-                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => void removeLocalAttachment(attachment.id)} disabled={parsingAttachments}><Icon name="close" size={16} /></button>
-              </div>
-            ))}
-            <p>发送时会按当前问题选取有限片段作为本地参考资料；完整文件不会上传。</p>
-          </div> : null}
-          <textarea ref={composerRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder={selectedModel ? "输入消息，Enter 发送，Shift+Enter 换行" : "先选择一个本地模型"} disabled={!selectedModel || warming || loadingConversation} rows={2} />
-          <div className="composer-toolbar">
-            <div className="composer-selection" aria-label="模型与性能模式">
-              <button type="button" className="composer-file-button" onClick={() => void addLocalAttachments()} disabled={busy || warming || loadingConversation || parsingAttachments}>{parsingAttachments ? "解析中…" : <><Icon name="plus" size={14} />文件</>}</button>
-              <span className="composer-selection-divider" aria-hidden="true">·</span>
-              <div className="select-control">
-                <select className="composer-select" aria-label="模型" value={selectedModel} onChange={(event) => { const nextModel = event.target.value; setSelectedModel(nextModel); setCurrentModelAlias(modelAliasFor(settings.modelAliases, nextModel)); }} disabled={busy || warming || models.length === 0 || messages.length > 0}>
-                  {models.length === 0 ? <option value="">没有检测到模型</option> : null}
-                  {models.map((model) => {
-                    const name = modelName(model);
-                    return <option key={name} value={name}>{modelAliasFor(settings.modelAliases, name, name === selectedModel ? currentModelAlias : undefined)}</option>;
-                  })}
-                </select>
-                <Icon name="chevron" size={14} />
-              </div>
-              <span className="composer-selection-divider" aria-hidden="true">·</span>
-              <div className="select-control">
-                <select className="composer-select mode-select" aria-label="性能模式" value={mode} onChange={(event) => setMode(event.target.value as PerformanceMode)} disabled={busy || warming || loadingConversation}>
-                  {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-                </select>
-                <Icon name="chevron" size={14} />
-              </div>
-            </div>
-            <div className="composer-toolbar-actions">
-              <span className="composer-status">{busy ? "正在接收本地流… · Esc 停止" : ""}</span>
-              {busy ? <button type="button" className="stop-button" onClick={() => void cancelMessage()}>停止</button> : null}
-              <button type="submit" className="send-button" aria-label={busy ? "生成中" : "发送"} disabled={submitDisabled}>{busy ? "…" : <Icon name="send" size={17} />}</button>
-            </div>
-          </div>
-        </form>
-      </section>
-
-      {sessionContextMenu ? (
-        <div
-          className="session-context-menu"
-          role="menu"
-          style={{ left: sessionContextMenu.x, top: sessionContextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => void removeConversation(sessionContextMenu.conversation)}
-            disabled={busy || loadingConversation}
-          >
-            删除会话
-          </button>
+        <div className="hero-heading" aria-hidden={!hero}>
+          <h1>开始一段本地对话</h1>
+          <p>有什么想和 Ollmin 聊聊？</p>
         </div>
-      ) : null}
+        <Composer draft={draft} setDraft={setDraft} textareaRef={composerRef} hero={hero}
+          fontSize={showSettings ? uiFontSizeDraft : uiFontSize}
+          busy={busy} online={Boolean(status) && !loadingModels} hasModel={models.some((model) => modelName(model) === selectedModel)}
+          warming={warming} loadingConversation={settling} parsingAttachments={parsingAttachments} attachments={attachments}
+          onSubmit={sendMessage} onStop={cancelMessage} onAddAttachments={addLocalAttachments} onRemoveAttachment={removeLocalAttachment}
+          modelControl={<ModelPicker {...pickerProps} kind="combined" />} />
+        <div className="composer-feedback" role="status">
+          {warming ? "正在本机预热模型…" : parsingAttachments ? "" : busy ? "正在接收本地流 · Esc 停止" : loadingModels ? "正在读取本机模型…" : modelsError ? <><span>{modelsError}</span><button type="button" onClick={() => void refreshConnection()}>重试</button></> : !status ? <><span>Ollama 未连接</span><button type="button" onClick={() => void refreshConnection()}>刷新连接</button></> : models.length === 0 ? <><span>没有检测到本地模型</span><button type="button" onClick={() => void refreshConnection()}>刷新模型</button></> : !models.some((model) => modelName(model) === selectedModel) ? "当前会话模型不可用，请在 Ollama 中安装该模型。" : ""}
+        </div>
+      </ChatWorkspace>
 
-      {showSettings ? <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettings(false)}>
-        <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}>
-          <div className="modal-heading"><div><p className="section-kicker">本地设置</p><h2 id="settings-title">Ollmin 设置</h2></div><button type="button" className="modal-close" aria-label="关闭设置" onClick={() => setShowSettings(false)}><Icon name="close" size={17} /></button></div>
-          <div className="settings-connection">
-            <button className="ghost-button" onClick={() => void refreshConnection()} disabled={busy || warming}>刷新连接</button>
-            <span>{status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}</span>
-          </div>
-          <div className="settings-grid">
-            <div className="settings-field">
-              <label htmlFor="theme">主题</label>
-              <div className="select-control">
-                <select id="theme" value={settingsDraft.theme} onChange={(event) => setSettingsDraft((current) => ({ ...current, theme: event.target.value as ThemeMode }))}>
-                  <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-            <div className="settings-field">
-              <label htmlFor="default-mode">默认性能模式</label>
-              <div className="select-control">
-                <select id="default-mode" value={settingsDraft.defaultMode} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultMode: event.target.value as PerformanceMode }))}>
-                  {Object.values(PERFORMANCE_PROFILES).map((item) => <option key={item.mode} value={item.mode}>{item.label}</option>)}
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-          </div>
-          <div className="settings-grid">
-            <div className="settings-field">
-              <label htmlFor="settings-model">新会话模型</label>
-              <div className="select-control">
-                <select id="settings-model" value={settingsDraft.defaultModel} onChange={(event) => setSettingsDraft((current) => ({ ...current, defaultModel: event.target.value }))}>
-                  <option value="">自动选择第一个可用模型</option>
-                  {models.map((model) => {
-                    const name = modelName(model);
-                    return <option key={name} value={name}>{modelAliasFor(settingsDraft.modelAliases, name)}</option>;
-                  })}
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-            <div className="settings-field">
-              <label htmlFor="context-size">上下文大小</label>
-              <div className="select-control">
-                <select
-                  id="context-size"
-                  value={settingsDraft.contextSize}
-                  onChange={(event) => setSettingsDraft((current) => ({
-                    ...current,
-                    contextSize: Number(event.target.value) as ContextSize,
-                  }))}
-                >
-                  {CONTEXT_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size / 1024}K</option>)}
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-          </div>
-          <div className="settings-grid">
-            <div className="settings-field">
-              <label htmlFor="output-token-limit">输出消息 token 上限</label>
-              <div className="select-control">
-                <select
-                  id="output-token-limit"
-                  value={settingsDraft.outputTokenLimit}
-                  onChange={(event) => setSettingsDraft((current) => ({
-                    ...current,
-                    outputTokenLimit: Number(event.target.value) as OutputTokenLimit,
-                  }))}
-                >
-                  {OUTPUT_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit / 1024}K</option>)}
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-            <div className="settings-field">
-              <label htmlFor="reasoning-token-limit">推理输出 token 上限</label>
-              <div className="select-control">
-                <select
-                  id="reasoning-token-limit"
-                  value={settingsDraft.reasoningTokenLimit}
-                  onChange={(event) => setSettingsDraft((current) => ({
-                    ...current,
-                    reasoningTokenLimit: Number(event.target.value) as ReasoningTokenLimit,
-                  }))}
-                >
-                  {REASONING_TOKEN_LIMIT_OPTIONS.map((limit) => <option key={limit} value={limit}>{limit === 0 ? "自动（硬上限16K）" : `${limit / 1024}K`}</option>)}
-                </select>
-                <Icon name="chevron" size={16} />
-              </div>
-            </div>
-          </div>
-          <p className="settings-note">推理上限仅在开启思考的模式中生效；快速模式关闭思考，“自动”会按当前模式分配，并受 16K token 安全上限约束。Ollama 会将推理与正文计入同一生成预算，Ollmin 按两项上限合并分配。</p>
-          <div className="settings-disclosure-row">
-            <button
-              type="button"
-              className="settings-disclosure"
-              aria-expanded={modelAliasesExpanded}
-              onClick={() => setModelAliasesExpanded((expanded) => !expanded)}
-            >
-              <span>模型别名</span>
-              <Icon name="chevron" size={16} />
-            </button>
-            <button
-              type="button"
-              className="settings-disclosure"
-              aria-expanded={exportExpanded}
-              onClick={() => setExportExpanded((expanded) => !expanded)}
-            >
-              <span>导出当前会话</span>
-              <Icon name="chevron" size={16} />
-            </button>
-          </div>
-          {modelAliasesExpanded ? <div className="model-alias-list">
-            {models.length === 0 ? <p className="settings-note">暂无可用模型，请先刷新连接。</p> : models.map((model) => {
-                const name = modelName(model);
-                const alias = Object.prototype.hasOwnProperty.call(settingsDraft.modelAliases, name)
-                  ? settingsDraft.modelAliases[name]
-                  : "";
-                return (
-                  <div className="model-alias-row" key={name}>
-                    <span className="model-alias-name" title={name}>{name}</span>
-                    <input
-                      aria-label={`${name} 的别名`}
-                      value={alias}
-                      maxLength={80}
-                      placeholder="使用原名"
-                      onChange={(event) => setSettingsDraft((current) => ({
-                        ...current,
-                        modelAliases: { ...current.modelAliases, [name]: event.target.value },
-                      }))}
-                    />
-                  </div>
-                );
-              })}
-          </div> : null}
-          {exportExpanded ? <div className="settings-export">
-            <div className="settings-export-actions">
-              <button className="ghost-button" onClick={() => void exportCurrent("markdown")} disabled={!currentConversationId || busy}>导出 Markdown</button>
-              <button className="ghost-button" onClick={() => void exportCurrent("json")} disabled={!currentConversationId || busy}>导出 JSON</button>
-            </div>
-            {!currentConversationId ? <small>打开或创建会话后可导出。</small> : null}
-          </div> : null}
-          <label className="check-row"><input type="checkbox" checked={settingsDraft.saveThinking} onChange={(event) => setSettingsDraft((current) => ({ ...current, saveThinking: event.target.checked }))} />允许把思考内容保存到本地会话</label>
-          <p className="settings-note">默认关闭。关闭后，新保存的消息只保留正文；已经保存的思考内容不会自动删除。</p>
-          <div className="settings-danger"><button className="danger-button" onClick={() => void clearLocalConversations()} disabled={busy || loadingConversation}>清空所有本地会话</button></div>
-          <div className="modal-actions"><button className="ghost-button" onClick={() => setShowSettings(false)}>取消</button><button className="primary-button" onClick={() => void saveSettingsDraft()} disabled={savingSettings}>{savingSettings ? "保存中…" : "保存设置"}</button></div>
-        </section>
-      </div> : null}
+      {showSettings ? <SettingsDialog settings={settingsDraft} onSettingsChange={setSettingsDraft}
+        uiFontSize={uiFontSizeDraft} onUiFontSizeChange={setUiFontSizeDraft} models={models.map(modelName)}
+        appVersion={appVersion} serviceStatus={status ? `Ollama ${status.version ?? "已连接"}` : "Ollama 未连接"}
+        currentConversationId={currentConversationId} busy={busy || warming || loadingConversation || loadingModels}
+        onRefreshConnection={() => void refreshConnection()} onWarmup={runWarmup} onExport={exportCurrent}
+        onClearConversations={clearLocalConversations} onRequestClose={closeSettings}
+        onSave={saveSettingsDraft} onSavedClose={() => setShowSettings(false)} /> : null}
+      {dialog ? <Modal onClose={() => { if (!dialogBusy) setDialog(null); }} labelledBy="action-dialog-title" className="action-modal">
+        <h2 id="action-dialog-title">{dialog.title}</h2>
+        {dialog.message ? <p>{dialog.message}</p> : null}
+        <form onSubmit={async (event) => {
+          event.preventDefault(); if (dialogBusy) return;
+          setDialogBusy(true); setDialogError(null);
+          try { await dialog.action(dialogValue); setDialog(null); }
+          catch (actionError) { setDialogError(errorText(actionError)); }
+          finally { setDialogBusy(false); }
+        }}>
+          {dialog.value !== undefined ? <label>会话名称<input value={dialogValue} maxLength={200} onChange={(event) => setDialogValue(event.target.value)} disabled={dialogBusy} /></label> : null}
+          {dialogError ? <p role="alert">{dialogError}</p> : null}
+          <div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setDialog(null)} disabled={dialogBusy}>取消</button><button type="submit" className="primary-button" disabled={dialogBusy}>{dialogBusy ? "处理中…" : "确认"}</button></div>
+        </form>
+      </Modal> : null}
     </main>
     </div>
   );

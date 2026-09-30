@@ -7,7 +7,7 @@
   <p><strong>Lightweight local AI for everyday PCs.</strong><br>
   A fast Ollama desktop client optimized for CPUs, integrated graphics, and small local models.</p>
   <p>
-    <a href="https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe"><strong>Download for Windows (v1.1.1)</strong></a>
+    <a href="https://github.com/lincux0/ollmin/releases/download/v1.2.0/Ollmin_1.2.0_x64-setup.exe"><strong>Download for Windows (v1.2.0)</strong></a>
     &nbsp;·&nbsp;
     <a href="https://github.com/lincux0/ollmin/releases">View all releases</a>
   </p>
@@ -34,6 +34,8 @@
 - Local conversation history in SQLite, with search, rename, restore, delete, and export;
 - File excerpts selected for the current question instead of sending an entire document;
 - Clear connection status, request state, and stop feedback.
+- A resizable chat layout, title-bar session search, reading anchors and user-turn navigation;
+- Four-section settings with theme/chat-font previews, explicit save/cancel and recoverable errors.
 
 Model speed depends on the model, quantization, context, and hardware. The modes configure requests to Ollama; they do not guarantee a particular inference speed.
 
@@ -52,7 +54,7 @@ Model speed depends on the model, quantization, context, and hardware. The modes
 
 ## Quick start for users
 
-1. [Download the Windows installer](https://github.com/lincux0/ollmin/releases/download/v1.1.1/Ollmin_1.1.1_x64-setup.exe) and install Ollmin.
+1. [Download the Windows installer](https://github.com/lincux0/ollmin/releases/download/v1.2.0/Ollmin_1.2.0_x64-setup.exe) and install Ollmin.
 2. Install and start [Ollama](https://ollama.com/), then make sure at least one model is available. For example, run <code>ollama pull qwen3:4b</code>.
 3. Open Ollmin, select the local model and a performance mode, then start a conversation.
 
@@ -114,7 +116,7 @@ Run the checks used by the repository's CI:
     cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
     cargo test --manifest-path src-tauri/Cargo.toml
 
-The v1.1.1 Windows installer is attached to the [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.1.1). Source build commands are for developers.
+The v1.2.0 Windows installer is attached to the [GitHub Release](https://github.com/lincux0/ollmin/releases/tag/v1.2.0). Source build commands are for developers.
 
 ## FAQ
 
@@ -150,7 +152,7 @@ Bug reports and focused feature ideas are welcome. If Ollmin fits your workflow,
 
 ## Current status
 
-The latest published release is v1.1.1. Installer signing, automatic updates, and full desktop end-to-end coverage are not included in this release. New features should preserve Ollmin's local-first design and avoid unnecessary model requests or context.
+The latest published release is v1.2.0. Installer signing, automatic updates, and full desktop end-to-end coverage are not included in this release. New features should preserve Ollmin's local-first design and avoid unnecessary model requests or context.
 
 ## License
 

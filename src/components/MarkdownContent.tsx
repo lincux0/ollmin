@@ -2,13 +2,15 @@ import { memo, type ReactNode } from "react";
 
 export interface MarkdownContentProps {
   content: string;
+  copiedId?: string | null;
+  onCopy?: (id: string, content: string) => void | Promise<void>;
 }
 
 export function areMarkdownContentPropsEqual(
   previous: MarkdownContentProps,
   next: MarkdownContentProps,
 ): boolean {
-  return previous.content === next.content;
+  return previous.content === next.content && previous.copiedId === next.copiedId && previous.onCopy === next.onCopy;
 }
 
 const LIST_ITEM_PATTERN = /^(\s*)([-+*]|\d+[.)])\s+(.+?)\s*$/;
@@ -42,8 +44,8 @@ function safeHref(href: string): string | null {
 
 /**
  * Render the small inline Markdown subset that is useful for chat answers.
- * Backticks and dollar-delimited expressions are deliberately kept as plain
- * text: Ollmin does not execute or typeset code and formulas.
+ * Inline code and dollar-delimited expressions remain literal React text;
+ * Ollmin does not execute code or typeset formulas.
  */
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -70,8 +72,11 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
       } else {
         nodes.push(token);
       }
-    } else if (token.startsWith("`") || token.startsWith("$")) {
-      // Advanced syntax is intentionally not interpreted.
+    } else if (token.startsWith("`")) {
+      const code = token.slice(1, -1);
+      nodes.push(<code key={key} className="inline-code">{code}</code>);
+    } else if (token.startsWith("$")) {
+      // Formula syntax remains literal; Ollmin does not typeset math.
       nodes.push(token);
     } else if (token.startsWith("***")) {
       nodes.push(
@@ -93,19 +98,6 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
 
   if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
   return nodes;
-}
-
-function renderLinesAsText(lines: string[], key: string): ReactNode {
-  return (
-    <p key={key}>
-      {lines.map((line, lineIndex) => (
-        <span key={`${key}-line-${lineIndex}`}>
-          {lineIndex > 0 ? <br /> : null}
-          {line}
-        </span>
-      ))}
-    </p>
-  );
 }
 
 function renderParagraph(lines: string[], key: string): ReactNode {
@@ -238,7 +230,12 @@ function isBlockStart(line: string): boolean {
   );
 }
 
-function renderBlocks(source: string, keyPrefix = "block"): ReactNode[] {
+function renderBlocks(
+  source: string,
+  keyPrefix = "block",
+  onCopy?: MarkdownContentProps["onCopy"],
+  copiedId?: string | null,
+): ReactNode[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const nodes: ReactNode[] = [];
   let index = 0;
@@ -254,15 +251,36 @@ function renderBlocks(source: string, keyPrefix = "block"): ReactNode[] {
     const line = lines[index];
     const fence = FENCE_PATTERN.exec(line);
     if (fence) {
-      // Keep code fences readable but deliberately do not parse or execute them.
-      const literalLines = [line];
+      const fenceLength = fence[1].length;
+      const fenceChar = fence[1][0];
+      const language = line.slice(fence[0].length).trim().split(/\s+/, 1)[0] ?? "";
+      const codeLines: string[] = [];
       index += 1;
-      while (index < lines.length && !FENCE_PATTERN.test(lines[index])) {
-        literalLines.push(lines[index]);
+      const closer = new RegExp(`^\\s*${fenceChar}{${fenceLength},}\\s*$`);
+      while (index < lines.length && !closer.test(lines[index])) {
+        codeLines.push(lines[index]);
         index += 1;
       }
-      if (index < lines.length) literalLines.push(lines[index++]);
-      nodes.push(renderLinesAsText(literalLines, key));
+      if (index < lines.length) index += 1;
+      const code = codeLines.join("\n");
+      nodes.push(
+        <pre className="code-block" key={key}>
+          <div className="code-block-header">
+            <span>{language || "代码"}</span>
+            {onCopy ? (
+              <button
+                type="button"
+                className="code-copy-button"
+                aria-label={copiedId === key ? "已复制代码" : "复制代码"}
+                onClick={() => void onCopy(key, code)}
+              >
+                {copiedId === key ? "已复制" : "复制"}
+              </button>
+            ) : null}
+          </div>
+          <code className={language ? `language-${language}` : undefined}>{code}</code>
+        </pre>,
+      );
       blockIndex += 1;
       continue;
     }
@@ -291,7 +309,7 @@ function renderBlocks(source: string, keyPrefix = "block"): ReactNode[] {
         quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
         index += 1;
       }
-      nodes.push(<blockquote key={key}>{renderBlocks(quoteLines.join("\n"), `${key}-quote`)}</blockquote>);
+      nodes.push(<blockquote key={key}>{renderBlocks(quoteLines.join("\n"), `${key}-quote`, onCopy, copiedId)}</blockquote>);
       blockIndex += 1;
       continue;
     }
@@ -329,9 +347,9 @@ function renderBlocks(source: string, keyPrefix = "block"): ReactNode[] {
 }
 
 /** A deliberately small, dependency-free Markdown renderer for model output. */
-function MarkdownContent({ content }: MarkdownContentProps) {
+function MarkdownContent({ content, copiedId, onCopy }: MarkdownContentProps) {
   if (!content.trim()) return <span className="muted">（没有正文）</span>;
-  return <div className="markdown">{renderBlocks(content)}</div>;
+  return <div className="markdown">{renderBlocks(content, "block", onCopy, copiedId)}</div>;
 }
 
 export default memo(MarkdownContent, areMarkdownContentPropsEqual);

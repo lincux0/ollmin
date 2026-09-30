@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import type { AttachmentSummary, ChatMessage } from "../contracts/ipc";
 import MarkdownContent from "./MarkdownContent";
 
@@ -15,32 +15,22 @@ export interface MessageItemData {
   attachments?: AttachmentSummary[];
 }
 
+export type MessageCopy = Pick<MessageItemData, "id" | "content">;
+
 export interface MessageItemProps {
   message: MessageItemData;
   copied: boolean;
-  onCopy: (message: Pick<MessageItemData, "id" | "content">) => void;
+  copiedThinking?: boolean;
+  onCopy: (message: MessageCopy) => void | Promise<void>;
 }
-
-export interface ThinkingBlockProps {
-  thinking: string;
-  open: boolean;
-}
-
-export const ThinkingBlock = memo(function ThinkingBlock({ thinking, open }: ThinkingBlockProps) {
-  return (
-    <details className="thinking-block" open={open}>
-      <summary>思考过程</summary>
-      <p>{thinking}</p>
-    </details>
-  );
-});
 
 /**
  * App keeps unchanged message objects stable while streaming. Ignore the
  * callback identity so a parent render does not invalidate every history row.
  */
 export function areMessageItemPropsEqual(previous: MessageItemProps, next: MessageItemProps): boolean {
-  return previous.message === next.message && previous.copied === next.copied;
+  return previous.message === next.message && previous.copied === next.copied &&
+    previous.copiedThinking === next.copiedThinking;
 }
 
 function attachmentDetail(attachment: AttachmentSummary): string {
@@ -53,9 +43,34 @@ function attachmentDetail(attachment: AttachmentSummary): string {
     : `${attachment.chunkCount} 个片段`;
 }
 
-function MessageItem({ message, copied, onCopy }: MessageItemProps) {
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function MessageItem({ message, copied, copiedThinking, onCopy }: MessageItemProps) {
+  const [thinkingOpen, setThinkingOpen] = useState(message.status === "streaming");
+  const [copiedPart, setCopiedPart] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState("");
+
+  useEffect(() => {
+    if (!copiedPart) return;
+    const timer = window.setTimeout(() => setCopiedPart(null), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copiedPart]);
+
+  async function copy(part: string, content: string) {
+    try {
+      await onCopy({ id: part ? `${message.id}:${part}` : message.id, content });
+      setCopiedPart(part || "body");
+      setCopyError("");
+    } catch (error) {
+      setCopiedPart(null);
+      setCopyError(errorText(error));
+    }
+  }
+
   return (
-    <article className={`message ${message.role} ${message.status}`}>
+    <article className={`message ${message.role} ${message.status}`} data-message-id={message.id} data-role={message.role}>
       {message.role === "assistant" || message.status !== "done" ? (
         <div className="message-meta">
           {message.role === "assistant" ? <span>{message.modelAlias || "模型"}</span> : null}
@@ -66,22 +81,49 @@ function MessageItem({ message, copied, onCopy }: MessageItemProps) {
             <button
               type="button"
               className="copy-button"
-              aria-label={copied ? "已复制回复" : "复制回复"}
-              title={copied ? "已复制回复" : "复制回复"}
-              onClick={() => void onCopy(message)}
+              aria-label={copied || copiedPart === "body" ? "已复制回复" : "复制回复"}
+              title={copied || copiedPart === "body" ? "已复制回复" : "复制回复"}
+              onClick={() => void copy("", message.content)}
             >
-              <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                {copied ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>}
-              </svg>
+              <CopyIcon copied={copied || copiedPart === "body"} />
             </button>
           ) : null}
         </div>
       ) : null}
+      {message.role === "user" && message.content ? (
+        <button
+          type="button"
+          className="message-copy-button"
+          aria-label={copied || copiedPart === "body" ? "已复制问题" : "复制问题"}
+          onClick={() => void copy("", message.content)}
+        >
+          <CopyIcon copied={copied || copiedPart === "body"} />
+        </button>
+      ) : null}
       {message.role === "assistant" && message.thinking ? (
-        <ThinkingBlock thinking={message.thinking} open={message.status === "streaming"} />
+        <details className="thinking-block" open={thinkingOpen} onToggle={(event) => setThinkingOpen(event.currentTarget.open)}>
+          <summary>
+            <span>思考过程</span>
+          </summary>
+          <button
+            type="button"
+            className="thinking-copy-button"
+            aria-label={copiedThinking || copiedPart === "thinking" ? "已复制思考过程" : "复制思考过程"}
+            onClick={() => void copy("thinking", message.thinking ?? "")}
+          >
+            <CopyIcon copied={copiedThinking || copiedPart === "thinking"} />
+          </button>
+          <p>{message.thinking}</p>
+        </details>
       ) : null}
       <div className="message-content">
-        {message.role === "assistant" ? <MarkdownContent content={message.content} /> : <p>{message.content}</p>}
+        {message.role === "assistant" ? (
+          <MarkdownContent
+            content={message.content}
+            onCopy={(suffix, content) => copy(suffix, content)}
+            copiedId={copiedPart}
+          />
+        ) : <p>{message.content}</p>}
         {message.status === "streaming" ? <span className="cursor" /> : null}
       </div>
       {message.role === "user" && message.attachments && message.attachments.length > 0 ? (
@@ -94,8 +136,17 @@ function MessageItem({ message, copied, onCopy }: MessageItemProps) {
           ))}
         </div>
       ) : null}
+      {copyError ? <p className="message-copy-error" role="alert">复制失败：{copyError}</p> : null}
       {message.error ? <p className="message-error">{message.error}</p> : null}
     </article>
+  );
+}
+
+function CopyIcon({ copied }: { copied: boolean }) {
+  return (
+    <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      {copied ? <path d="m5 12 4 4L19 6" /> : <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>}
+    </svg>
   );
 }
 

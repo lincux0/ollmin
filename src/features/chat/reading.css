@@ -1,0 +1,94 @@
+article.message.user {
+  align-self: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: start;
+  max-width: 70.2%;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--bg-user-message, #e9edf3);
+  box-shadow: none;
+}
+
+article.message.user .message-content { grid-column: 1; grid-row: 1; min-width: 0; }
+article.message.user .message-content > p { overflow-wrap: anywhere; }
+article.message.user .message-copy-button { grid-column: 2; grid-row: 1; }
+article.message.user .message-attachments,
+article.message.user .message-copy-error,
+article.message.user .message-error { grid-column: 1 / -1; }
+article.message.assistant { align-self: flex-start; background: transparent; box-shadow: none; }
+
+.message-copy-button,
+.thinking-copy-button,
+.code-copy-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #717782);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.message-copy-button:hover,
+.thinking-copy-button:hover,
+.code-copy-button:hover { background: var(--surface-hover, rgba(120, 130, 145, .14)); color: var(--accent, #557bb7); }
+.message-copy-button:focus-visible,
+.thinking-copy-button:focus-visible,
+.code-copy-button:focus-visible,
+.turn-navigator-item:focus-visible { outline: 2px solid var(--focus-ring, #6a98db); outline-offset: 2px; }
+.message-copy-error { margin: 6px 0 0; color: var(--danger, #b42318); font-size: 12px; }
+
+.thinking-block {
+  position: relative;
+  margin: 5px 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, #59616e);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.thinking-block summary { min-height: 24px; padding-right: 28px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.thinking-copy-button { position: absolute; top: 0; right: 3px; }
+.thinking-block p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.markdown .inline-code { padding: 2px 4px; border-radius: 4px; background: var(--surface-soft, #f0f2f5); color: var(--text-secondary, #43526a); font-family: var(--font-mono, Consolas, monospace); font-size: .92em; }
+.markdown .code-block { margin: 10px 0; padding: 0; overflow: hidden; border-radius: 9px; background: #252a32; color: #e4e9f0; }
+.code-block-header { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 2px 8px 2px 12px; border-bottom: 1px solid rgba(255,255,255,.1); color: #bec8d6; font: 11px var(--font-mono, Consolas, monospace); }
+.code-block > code { display: block; padding: 11px 12px; overflow-x: auto; background: transparent; color: inherit; font: 12px/1.55 var(--font-mono, Consolas, monospace); white-space: pre; }
+.code-block .code-copy-button { color: #d5dce7; }
+
+.turn-navigator {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  padding: 0;
+}
+.turn-navigator-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: min(48vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 7px 4px;
+  scrollbar-width: thin;
+}
+.turn-navigator-preview { position: absolute; top: 50%; right: 32px; z-index: 1; width: max-content; max-width: min(280px, 56vw); padding: 7px 9px; transform: translateY(-50%); border: 1px solid var(--border-subtle, #dfe3e9); border-radius: 9px; background: var(--surface, #fff); color: var(--text-primary, #20242a); box-shadow: 0 4px 16px rgba(25, 32, 42, .14); font-size: 12px; line-height: 1.45; white-space: nowrap; }
+.turn-navigator-item { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 999px; background: transparent; cursor: pointer; }
+.turn-navigator-item > span { width: 6px; height: 6px; border-radius: 50%; background: var(--border-strong, #9ba3ae); transition: transform 120ms ease, background-color 120ms ease; }
+.turn-navigator-item:hover > span, .turn-navigator-item:focus-visible > span { transform: scale(1.55); background: var(--accent, #557bb7); }
+.turn-navigator-item[aria-current="location"] > span { width: 9px; height: 9px; background: var(--accent, #557bb7); }
+
+@media (max-width: 720px) {
+  article.message.user { max-width: 82%; }
+  .turn-navigator { display: none; }
+}

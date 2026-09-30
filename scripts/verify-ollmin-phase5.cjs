@@ -1,0 +1,63 @@
+// Existing Playwright MCP; synthetic settings/IPC, never edits user SQLite.
+async (page) => {
+  const checks=[];const check=(ok,label)=>{if(!ok)throw new Error(label);checks.push(label);};
+  await page.evaluate(()=>localStorage.removeItem('ollmin.uiFontSize'));await page.reload();await page.locator('.workspace-hero').waitFor();
+  await page.setViewportSize({width:1180,height:820});await page.emulateMedia({colorScheme:'dark',reducedMotion:'reduce'});
+  const settings=page.getByRole('dialog',{name:'Ollmin 设置',exact:true});
+  const open=async()=>{if(await page.getByRole('button',{name:'设置',exact:true}).count()===0)await page.getByRole('button',{name:'展开侧栏',exact:true}).click();await page.getByRole('button',{name:'设置',exact:true}).click();await settings.waitFor();};
+  const category=async(name)=>settings.getByRole('button',{name,exact:true}).click();
+  await open();check(await settings.getByRole('navigation',{name:'设置分类'}).locator('button').count()===4,'四组真实设置分类');
+  const geometry=[];
+  for(const theme of ['light','dark']){await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'});for(const [width,height] of [[860,640],[1024,820],[1180,820],[1440,900]]){
+    await page.setViewportSize({width,height});await page.screenshot({path:'D:/ollmin/output/playwright/dsh-phase45/settings-'+theme+'-'+width+'.png'});
+    const g=await settings.evaluate(el=>{const r=el.getBoundingClientRect(),footer=el.querySelector('footer').getBoundingClientRect();return {width:innerWidth,height:innerHeight,panelWidth:r.width,panelHeight:r.height,radius:getComputedStyle(el).borderRadius,navWidth:el.querySelector('nav').getBoundingClientRect().width,footerReachable:footer.bottom<=innerHeight&&footer.top>=0,overflow:document.documentElement.scrollWidth>innerWidth};});geometry.push(g);check(g.panelWidth<=800&&g.panelHeight<=Math.min(800,height-120)+1&&g.radius==='28px'&&g.navWidth===188&&g.footerReachable&&!g.overflow,'设置几何 '+theme+' '+width);
+  }}
+  await page.setViewportSize({width:860,height:640});await page.emulateMedia({colorScheme:'dark'});
+  await settings.getByRole('button',{name:'保存设置',exact:true}).focus();await page.keyboard.press('Tab');
+  check(await settings.getByRole('button',{name:'关闭设置',exact:true}).evaluate(el=>el===document.activeElement),'Tab焦点闭环');
+  await page.keyboard.press('Shift+Tab');check(await settings.getByRole('button',{name:'保存设置',exact:true}).evaluate(el=>el===document.activeElement),'ShiftTab焦点闭环');
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).dispatchEvent('keydown',{key:'Escape',isComposing:true});
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).dispatchEvent('keydown',{key:'Escape',repeat:true});
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).dispatchEvent('keydown',{key:'Escape',altKey:true});
+  check(await settings.count()===1,'IME重复修饰Escape不误关');
+  await page.keyboard.press('Control+n');check(await settings.count()===1&&await page.evaluate(()=>window.__REQUESTS__.length)===0,'模态屏蔽背景新建与生成');
+  await settings.getByLabel('主题',{exact:true}).selectOption('light');await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');checks.push('主题草稿即时预览');
+  await settings.getByLabel('会话字号',{exact:true}).selectOption('22');
+  check(await page.locator('.composer-input').evaluate(el=>getComputedStyle(el).fontSize)==='22px','字号仅会话与输入联动预览');
+  await category('模型与性能');await settings.getByLabel('新会话模型',{exact:true}).selectOption('fixture-code:3b');
+  await settings.getByLabel('默认性能模式',{exact:true}).selectOption('balanced');await settings.getByRole('button',{name:/^模型别名/}).click();
+  await settings.getByRole('textbox',{name:'fixture-code:3b 的别名'}).fill('测试别名');
+  check(await settings.locator('.settings-dialog-content').evaluate(el=>el.scrollHeight>el.clientHeight),'设置内容独立滚动');
+  await category('外观');check(await settings.getByLabel('会话字号',{exact:true}).inputValue()==='22','切分类保留所有草稿');
+  await page.setViewportSize({width:1180,height:820});
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).click();const confirm=page.getByRole('dialog',{name:'放弃设置修改？',exact:true});await confirm.waitFor();
+  check(await confirm.getByRole('button',{name:'取消',exact:true}).evaluate(el=>el===document.activeElement),'放弃确认默认安全焦点');
+  await confirm.getByRole('button',{name:'取消',exact:true}).click();check(await settings.getByLabel('会话字号',{exact:true}).inputValue()==='22','取消放弃保留草稿');
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).click();await confirm.getByRole('button',{name:'确认',exact:true}).click();await settings.waitFor({state:'detached'});
+  await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');check(await page.locator('.composer-input').evaluate(el=>getComputedStyle(el).fontSize)==='14px','放弃恢复保存的主题和字号');
+  await page.waitForFunction(()=>document.activeElement?.textContent==='设置');check(await page.getByRole('button',{name:'设置',exact:true}).evaluate(el=>el===document.activeElement),'关闭焦点返回实际触发器');
+  await open();await settings.getByLabel('会话字号',{exact:true}).selectOption('16');
+  await page.evaluate(()=>{window.__FIXTURE__.saveError=true;window.__FIXTURE__.saveDelay=400;});
+  const before=await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='update_settings').length);
+  await settings.getByRole('button',{name:'保存设置',exact:true}).evaluate(el=>{el.click();el.click();});
+  await settings.getByRole('button',{name:'保存中…',exact:true}).waitFor();check(await settings.getByRole('button',{name:'关闭设置',exact:true}).isDisabled(),'保存中冻结关闭');
+  await page.keyboard.press('Escape');await settings.getByRole('alert').waitFor();
+  check(await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='update_settings').length)===before+1,'保存同步重入门禁');
+  check(await settings.getByLabel('会话字号',{exact:true}).inputValue()==='16'&&await page.evaluate(()=>localStorage.getItem('ollmin.uiFontSize'))==='14','失败保留编辑并回滚字号偏好');
+  await page.evaluate(()=>{window.__FIXTURE__.saveError=false;window.__originalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key==='ollmin.uiFontSize')throw new Error('合成偏好写失败');return window.__originalSetItem.call(this,key,value);};});
+  const previousCalls=await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='update_settings').length);
+  await settings.getByRole('button',{name:'保存设置',exact:true}).click();await settings.getByRole('alert').filter({hasText:'偏好写失败'}).waitFor();
+  check(await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='update_settings').length)===previousCalls,'字号写失败不提交业务设置');
+  await page.evaluate(()=>Storage.prototype.setItem=window.__originalSetItem);await settings.getByRole('button',{name:'保存设置',exact:true}).click();await settings.waitFor({state:'detached'});
+  check(await page.evaluate(()=>localStorage.getItem('ollmin.uiFontSize'))==='16','重试成功持久化字号');
+  await page.reload();await page.locator('.workspace-hero').waitFor();check(await page.locator('.composer-input').evaluate(el=>getComputedStyle(el).fontSize)==='16px','重启恢复字号偏好');
+  await open();await category('会话与隐私');check(!(await settings.getByRole('checkbox').isChecked()),'思考隐私默认关闭');
+  check(await settings.getByRole('button',{name:'导出 Markdown',exact:true}).isDisabled(),'无会话不伪造导出');
+  await settings.getByRole('button',{name:'清空所有本地会话',exact:true}).click();const danger=page.getByRole('dialog',{name:'清空本地会话？',exact:true});await danger.waitFor();
+  check((await danger.innerText()).includes('无法撤销')&&await danger.getByRole('button',{name:'取消',exact:true}).evaluate(el=>el===document.activeElement),'清空后果与安全焦点');await danger.getByRole('button',{name:'取消',exact:true}).click();
+  check(await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='clear_conversations').length)===0,'取消危险操作不清数据');
+  await category('本机服务与关于');check((await settings.innerText()).includes('127.0.0.1:11434')&&(await settings.innerText()).includes('1.2.0'),'显示真实本机服务与版本');
+  const gets=await page.evaluate(()=>window.__COMMANDS__.filter(x=>x.cmd==='get_models').length);await settings.getByRole('button',{name:'刷新连接与模型',exact:true}).click();await page.waitForFunction(n=>window.__COMMANDS__.filter(x=>x.cmd==='get_models').length>n,gets);checks.push('显式刷新连接与模型');
+  await settings.getByRole('button',{name:'关闭设置',exact:true}).click();await settings.waitFor({state:'detached'});
+  return {checks,count:checks.length,geometry,scope:'Synthetic settings IPC and preferences only'};
+}

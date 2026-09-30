@@ -4,6 +4,22 @@
 
 # Changelog
 
+## 1.2.0 — 2026-09-30
+
+### Changed
+
+- Rebuilt the desktop chat layout with neutral light/dark themes, a compact title bar, resizable sidebar and shared reading/composer width.
+- Added title-bar session search, keyboard menus, a persistent composer, model/performance selection and clearer attachment states.
+- Improved reading anchors, user-turn navigation, thinking disclosure and separate message/thinking/code copy controls.
+- Reorganized settings into four sections with theme/font previews, cancel restoration and recoverable save errors.
+- Refined spacing, rounded controls and alias-only model labels while retaining real model identifiers for requests.
+
+### Validation and limits
+
+- Local frontend tests and browser fixture checks passed; the Windows NSIS installer is provided separately.
+- Ollama remains fixed to the local endpoint. No accounts, telemetry, extra background model requests or database migration were added.
+- Installer signing and automatic updates are not included. Native IME, the full Windows DPI matrix and complete native chat end-to-end coverage remain pending; rich text remains the existing safe subset.
+
 ## 1.1.1 — 2026-09-29
 
 ### Changed

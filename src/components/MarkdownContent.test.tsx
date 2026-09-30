@@ -47,16 +47,28 @@ describe("MarkdownContent", () => {
     expect(unorderedHtml.match(/<li>/g)).toHaveLength(3);
   });
 
-  it("keeps formulas and code as escaped plain text instead of interpreting them", () => {
+  it("renders inline code and fenced code safely while keeping formulas literal", () => {
     const html = renderToStaticMarkup(
-      <MarkdownContent content="$E=mc^2$ `const value = 1`\n\n```ts\nconst answer = 42;\n```" />,
+      <MarkdownContent content={"$E=mc^2$ `const value = 1`\n\n```ts\nconst answer = 42;\n```"} onCopy={() => undefined} />,
     );
 
     expect(html).toContain("$E=mc^2$");
-    expect(html).toContain("`const value = 1`");
+    expect(html).toContain('<code class="inline-code">const value = 1</code>');
     expect(html).toContain("const answer = 42;");
-    expect(html).not.toContain("<code");
-    expect(html).not.toContain("<pre");
+    expect(html).toContain('<pre class="code-block">');
+    expect(html).toContain('class="language-ts"');
+    expect(html).toContain('aria-label="复制代码"');
+  });
+
+  it("shows an unfinished code fence as an escaped code block", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent content={'```html\n<img src=x onerror="alert(1)">'} onCopy={() => undefined} />,
+    );
+
+    expect(html).toContain("&lt;img");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("language-html");
+    expect(html).toContain('aria-label="复制代码"');
   });
 
   it("does not turn unsafe links into clickable HTML", () => {

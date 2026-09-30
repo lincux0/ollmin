@@ -20,6 +20,9 @@ describe("message rendering boundaries", () => {
     expect(html).toContain("思考过程");
     expect(html).toContain("生成中");
     expect(html).toContain('aria-label="复制回复"');
+    expect(html).toContain('data-message-id="assistant-1"');
+    expect(html).toContain('data-role="assistant"');
+    expect(html).toContain('open=""');
     expect(html.indexOf('class="message-meta"')).toBeLessThan(html.indexOf('class="message-content"'));
     expect(html).toContain("正文");
 
@@ -69,6 +72,19 @@ describe("message rendering boundaries", () => {
     expect(html).toContain("调研方案.pdf");
     expect(html).toContain("已作为本地参考资料发送");
     expect(html).not.toContain("你");
+  });
+
+  it("offers copying for the user's own message", () => {
+    const html = renderToStaticMarkup(
+      <MessageItem
+        message={{ id: "user-1", role: "user", content: "我的问题", status: "done" }}
+        copied={false}
+        onCopy={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("我的问题");
+    expect(html).toContain('aria-label="复制问题"');
   });
 
   it("only invalidates a message row when its message or copied state changes", () => {
