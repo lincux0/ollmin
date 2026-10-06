@@ -15,8 +15,25 @@
 </div>
 
 <p align="center">
-  <img src="assets/ollmin-ui.png" alt="Ollmin desktop chat window with local model controls" width="1000">
+  <img src="assets/ollmin-ui.png" alt="Ollmin desktop home screen with local model controls" width="1000">
 </p>
+
+<details>
+<summary>More screenshots: performance modes, local file questions, and settings</summary>
+
+**Performance modes**
+
+![Fast, Balanced, and Reasoning modes](assets/ollmin-modes.png)
+
+**Local file questions**
+
+![Summarizing a local DOCX file](assets/ollmin-document-chat.png)
+
+**Settings**
+
+![Theme and chat-font settings](assets/ollmin-settings.png)
+
+</details>
 
 ## Why Ollmin?
 

@@ -15,8 +15,25 @@
 </div>
 
 <p align="center">
-  <img src="assets/ollmin-ui.png" alt="Ollmin 本地聊天窗口与模型控制" width="1000">
+  <img src="assets/ollmin-ui.png" alt="Ollmin 主界面与本地模型控制" width="1000">
 </p>
+
+<details>
+<summary>更多截图：性能模式、本地文件问答与设置</summary>
+
+**性能模式**
+
+![快速、平衡与推理模式](assets/ollmin-modes.png)
+
+**本地文件问答**
+
+![概括本地 DOCX 文件](assets/ollmin-document-chat.png)
+
+**设置**
+
+![主题与会话字号设置](assets/ollmin-settings.png)
+
+</details>
 
 ## 为什么选择 Ollmin？
 
