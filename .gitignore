@@ -9,6 +9,7 @@ src-tauri/target-alias-test/
 src-tauri/gen/
 *.local
 *.log
+output/playwright/
 .env
 .env.*
 !.env.example
@@ -19,9 +20,9 @@ graphify-out/
 *.db
 *.db-*
 
-# 本地维护文档与测试报告不发布到公共仓库
+# 项目文档与测试报告纳入版本控制；本地私钥仍不得提交
 AGENTS.md
-docs/
+docs/密钥.pfx
 benchmarks/
 RELEASE_NOTES.md
 
@@ -29,3 +30,10 @@ RELEASE_NOTES.md
 examples/
 .github/ruleset-main-review.json
 src-tauri.lnk
+
+# 本地模型大文件与 Codex 临时附件
+*.gguf
+.codex-remote-attachments/
+
+# 外部独立审查报告（本地工作文件）
+docs/review/ollmin/独立代码审查报告-2026-09-17.md

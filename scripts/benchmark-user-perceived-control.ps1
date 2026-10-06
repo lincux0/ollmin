@@ -256,7 +256,7 @@ try {
     "",
     "- 真实 Ollmin GUI 未能在当前执行环境中获得可交互的桌面窗口句柄，因此没有伪造 T1/T2/T3/T4/T5，也没有把 API 控制组冒充 GUI 结果。",
     "- CLI 首个输出时间是进程标准输出首字节；API 首个输出时间是首个 NDJSON 分片，不等同于真实 Ollmin 首个可见字符。",
-    "- 如需完成完整方案，需在有可见桌面的用户会话中运行 Ollmin Release，并按 user-perceived-benchmark-plan.md 采集录像或前端绘制时间。"
+    "- 如需完成完整方案，需在有可见桌面的用户会话中运行 Ollmin Release，并按 docs/tests/user-perceived-benchmark-plan.md 采集录像或前端绘制时间。"
   ) -join [Environment]::NewLine
   Set-Content -LiteralPath $outputPath -Value $report -Encoding UTF8
   Write-Output "Generated $outputPath"

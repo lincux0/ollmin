@@ -39,7 +39,7 @@
 
 - 面向低配 PC、CPU、核显和有限内存，保持轻量；
 - 为 3B、4B 等本地小模型设计；
-- 完全本地：Ollmin 连接本机 Ollama，无需账号；
+- 支持本地模型：Ollmin 连接本机 Ollama，使用已下载的本地模型无需账号；
 - 支持本地解析 PDF、DOCX、XLS 和 XLSX 文件并用于问答；
 - 简要显示每轮生成速度与耗时；
 - 专注 Windows 桌面体验，尽量减少无关上下文和后台模型请求。
@@ -111,7 +111,7 @@ Ollmin 在本机解析所选文件，并在本地保存会话。聊天请求从 
 
 ## 隐私与本地数据
 
-- Ollmin 只连接 <code>127.0.0.1:11434</code>；提示词和回答不会由 Ollmin 发送到云服务。
+- Ollmin 只连接 <code>127.0.0.1:11434</code>。使用已下载的本地模型时，推理在本机进行。Ollama 也能经本地服务调用云端模型；希望保持本地推理时，请选择已下载的本地模型。详见 [Ollama 云端模型说明](https://docs.ollama.com/cloud)。
 - 无账号、遥测、云同步或后台模型请求。
 - 会话和设置保存在 <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>。
 - 为了恢复会话附件，解析出的片段和元数据会以明文保存在该本地数据库中；不会保存原始文件或源文件路径。
@@ -156,6 +156,13 @@ SQLite 数据库位于 <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>�
 ### 当前有哪些限制？
 
 扫描件 PDF 需要先在其他软件中做 OCR，旧版 <code>.doc</code> 需要先另存为 DOCX。生成速度取决于本地模型与硬件。Ollmin 1.2.0 尚未提供自动更新和完整的桌面端到端测试流程。
+
+## 项目文档
+
+- [当前架构](docs/ARCHITECTURE.md)
+- [开发与构建](docs/DEVELOPMENT.md)
+- [测试与验证](docs/TESTING.md)
+- [重大技术决策](docs/DECISIONS.md)
 
 ## 参与贡献
 

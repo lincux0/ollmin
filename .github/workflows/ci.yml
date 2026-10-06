@@ -43,6 +43,15 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Verify Ollmin WebView CSP blocks direct Ollama connections
+        shell: pwsh
+        run: |
+          $config = Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json
+          $csp = [string]$config.app.security.csp
+          if ($csp -match '11434') {
+            throw 'Ollmin WebView CSP must not allow direct Ollama connections.'
+          }
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 

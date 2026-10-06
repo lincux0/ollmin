@@ -39,7 +39,7 @@
 
 - Lightweight for low-end PCs, CPUs, integrated graphics, and limited memory;
 - Designed for small local models, including 3B and 4B-class models;
-- Fully local: Ollmin connects to Ollama on your own PC and needs no account;
+- Local model support: Ollmin connects to Ollama on your own PC; downloaded local models need no account;
 - Local PDF, DOCX, XLS, and XLSX parsing for file questions;
 - A compact per-turn summary of generation speed and elapsed time;
 - A focused Windows desktop app that avoids unnecessary context and background model requests.
@@ -111,7 +111,7 @@ Ollmin parses selected files and stores conversations locally. Chat requests go 
 
 ## Privacy and local data
 
-- Ollmin connects only to <code>127.0.0.1:11434</code>; prompts and responses are not sent to a cloud service by Ollmin.
+- Ollmin connects only to <code>127.0.0.1:11434</code>. With downloaded local models, inference runs on your PC. Ollama can also route cloud models through its local service; choose a downloaded local model to keep inference local. See [Ollama Cloud](https://docs.ollama.com/cloud).
 - No account, telemetry, cloud sync, or background model requests.
 - Conversations and settings are stored at <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</code>.
 - Parsed attachment excerpts and metadata are stored as plaintext in that local database; original files and source paths are not stored.
@@ -155,7 +155,14 @@ The SQLite database is at <code>%APPDATA%\com.ollmin.desktop\ollmin.sqlite3</cod
 
 ### What are the current limitations?
 
-Scanned PDFs need OCR in another app before use, and legacy <code>.doc</code> files must be saved as DOCX. Generation speed depends on the local model and hardware. Ollmin 1.1.0 does not include automatic updates or a full desktop end-to-end test workflow.
+Scanned PDFs need OCR in another app before use, and legacy <code>.doc</code> files must be saved as DOCX. Generation speed depends on the local model and hardware. Ollmin 1.2.0 does not include automatic updates or a full desktop end-to-end test workflow.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development and builds](docs/DEVELOPMENT.md)
+- [Testing and validation](docs/TESTING.md)
+- [Technical decisions](docs/DECISIONS.md)
 
 ## Contributing
 
